@@ -7,6 +7,7 @@ import extension from "../extensions/python/index.ts";
 import trim from "../extensions/jev-trim.ts";
 import { createBridge, receiptSummary, type Receipt } from "../extensions/python/bridge.ts";
 import { PythonRuntime, type Bridge } from "../extensions/python/runtime.ts";
+import { hasDill } from "./dill.ts";
 
 const kernels: PythonRuntime[] = [];
 const dirs: string[] = [];
@@ -179,7 +180,7 @@ describe("Python tool bridge", () => {
 });
 
 describe("CodeMode opt-in and lifecycle", () => {
-	test("prompt instructions are stable and state survives tree navigation and resume", async () => {
+	(hasDill ? test : test.skip)("prompt instructions are stable and state survives tree navigation and resume", async () => {
 		const hooks = new Map<string, Function[]>();
 		let python!: ToolDefinition<any, any>;
 		const api = {

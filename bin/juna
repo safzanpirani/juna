@@ -40,17 +40,13 @@ if [ ! -e "$PI_CODING_AGENT_DIR/settings.json" ]; then
 	picker="${JUNA_SKILL_PICKER:-$here/../pi-jev-skill-picker/extensions/skill-jev.ts}"
 	if [ -f "$picker" ]; then
 		picker="$(cd -P "$(dirname "$picker")" && pwd)/$(basename "$picker")"
-		python3 - "$PI_CODING_AGENT_DIR/settings.json" "$picker" <<'PY'
-import json, sys
-path, picker = sys.argv[1], sys.argv[2]
-with open(path) as handle:
-	settings = json.load(handle)
-if picker not in settings["extensions"]:
-	settings["extensions"].insert(0, picker)
-with open(path, "w") as handle:
-	json.dump(settings, handle, indent=2)
-	handle.write("\n")
-PY
+		bun -e '
+const fs = require("fs");
+const [path, picker] = process.argv.slice(1);
+const settings = JSON.parse(fs.readFileSync(path, "utf8"));
+if (!settings.extensions.includes(picker)) settings.extensions.unshift(picker);
+fs.writeFileSync(path, JSON.stringify(settings, null, 2) + "\n");
+' "$PI_CODING_AGENT_DIR/settings.json" "$picker"
 	fi
 fi
 

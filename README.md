@@ -10,6 +10,7 @@ juna never breaks the provider prompt cache. Every saving below comes on top of 
 - [What it saves](#what-it-saves)
 - [Setup guide for agents](#setup-guide-for-agents)
 - [Features](#features)
+- [Privacy](#privacy)
 - [Configuration](#configuration)
 - [Measuring it yourself](#measuring-it-yourself)
 - [Troubleshooting](#troubleshooting)
@@ -148,6 +149,8 @@ This section is written for a coding agent doing the install. Run each step in o
 
 ### Step 1. Check the prerequisites
 
+juna runs on macOS and Linux. The launcher is a bash script, so on Windows use WSL.
+
 ```bash
 bun --version      # needs 1.4 or newer: https://bun.sh
 node --version     # needs 22.6 or newer (Pi runs on Node)
@@ -182,7 +185,7 @@ bun run check
 
 Any parent directory works in place of `~/src`. Keep the two repos next to each other. To keep the picker somewhere else, set `JUNA_SKILL_PICKER` to the path of its `extensions/skill-jev.ts` before step 4.
 
-**Check:** `bun run check` ends with `0 fail`. The Python CodeMode tests need Python 3.10+ with `dill`; if only those fail, do step 7 and run the check again, or skip them if you will not use CodeMode.
+**Check:** `bun run check` ends with `0 fail`. Without the optional Python setup from step 7, it prints one note and skips the eight durable CodeMode tests.
 
 ### Step 3. Put `juna` on PATH
 
@@ -222,7 +225,9 @@ pi --list-models | head -40                 # see what is available
 
 Then edit `defaultProvider` and `defaultModel` in `~/.pi/juna/settings.json`, or pass `juna --model <provider>/<id>` on each run.
 
-**Check:** `juna -p "Reply with exactly: OK"` prints `OK`.
+**Check:** `juna -p "Reply with exactly: OK" < /dev/null` prints `OK`.
+
+Pi's print mode (`-p`) reads standard input until it closes. An agent's shell often leaves it open, which makes `-p` wait forever, so every `-p` command in this guide ends with `< /dev/null`.
 
 ### Step 6. Set up Jev and Exa
 
@@ -315,7 +320,7 @@ Then run one real turn that produces long output:
 
 ```bash
 cd "$(mktemp -d)"
-juna -p "Run this exact bash command: ls -la /usr/bin /usr/lib | head -400. Then reply with only the number of lines you were shown."
+juna -p "Run this exact bash command: ls -la /usr/bin /usr/lib | head -400. Then reply with only the number of lines you were shown." < /dev/null
 grep -o '\[juna[^]]*' $(ls -t ~/.pi/juna/sessions/*/*.jsonl | head -1) | head
 ```
 
@@ -324,7 +329,7 @@ grep -o '\[juna[^]]*' $(ls -t ~/.pi/juna/sessions/*/*.jsonl | head -1) | head
 With an Exa key, one more:
 
 ```bash
-juna -p "Use web_search to find the latest release of the Pi coding agent. Reply with only the version."
+juna -p "Use web_search to find the latest release of the Pi coding agent. Reply with only the version." < /dev/null
 ```
 
 **Check:** the reply is a version number.
@@ -334,7 +339,7 @@ juna -p "Use web_search to find the latest release of the Pi coding agent. Reply
 ```bash
 cd ~/some/project
 juna                        # interactive, like pi
-juna -p "task"              # one-shot
+juna -p "task" < /dev/null  # one-shot; see step 5 for why stdin is closed
 juna --model <provider>/<id>
 ```
 
@@ -562,6 +567,15 @@ Input goes to background windows by default, so the real mouse does not move. Wh
 
 Privacy: Jev requests carry the window title, the task, and control labels and values. Do not point `ui_look` focus, `ui_act` descriptions or `ui_do` at windows holding secrets.
 
+## Privacy
+
+juna runs locally, but two features send data to outside services when their keys are set.
+
+- **TypeSafe (Jev)** receives the text of tool results that are long enough to prune (over 3,000 characters by default), your prompt as the task, and the tool name and arguments. That can include source code, command output and file contents. It also receives skill names and descriptions for `skill_search`, and window titles, control labels and values in computer-use mode.
+- **Exa** receives `web_search` queries, and the URLs and questions given to `web_fetch`.
+
+Without a TypeSafe key, nothing leaves the machine for pruning: the output reducers, dedup, folding and spill all run locally. To keep a sensitive project local while still using juna, run it from a separate profile with no key file: `JUNA_DIR=~/.pi/juna-local juna`. The launcher links `juna.json` and `skill-jev.json` from `~/.pi/agent` when they exist there, so keep keys out of that directory too, and leave `TYPESAFE_API_KEY` and `EXA_API_KEY` unset. Your model provider receives the whole conversation as usual, as it would with stock Pi.
+
 ## Configuration
 
 Keys come from the environment or `~/.pi/juna/juna.json` (`apiKey`, `exaApiKey`). The TypeSafe key also falls back to the skill picker's `skill-jev.json`. Everything else is an environment variable.
@@ -664,6 +678,7 @@ Each run gets a fresh copy of the fixture, a fresh profile, its own session dire
 | `bun run check` fails on a fresh clone | bun older than 1.4, `bun install` skipped, or no Python venv for the CodeMode tests |
 | A read is folded but the file is not TypeScript | Expected. ast-grep ships TS, TSX and JS only; other files are never folded |
 | `web_search` says it has no key | No `exaApiKey` in `juna.json` and no `EXA_API_KEY` |
+| `juna -p` never returns | Pi's print mode waits for standard input to close. Add `< /dev/null` |
 | `skill_search` says there is no TypeSafe key | `~/.pi/juna/skill-jev.json` is missing. Run `juna --version` once to link it to `juna.json` |
 | A key is set but a feature stays off | Run `bun scripts/check-keys.ts`; its output names the cause |
 | Edits to `config/` have no effect | The profile holds copies. Delete the copied file and run `juna` again |

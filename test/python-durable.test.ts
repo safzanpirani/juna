@@ -3,6 +3,9 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PythonRuntime } from "../extensions/python/runtime.ts";
+import { hasDill } from "./dill.ts";
+
+const durable = hasDill ? test : test.skip;
 
 const runtimes: PythonRuntime[] = [];
 const directories: string[] = [];
@@ -23,7 +26,7 @@ afterEach(async () => {
 	for (const path of directories.splice(0)) await rm(path, { force: true, recursive: true });
 });
 
-test("a new runtime restores data, aliases, functions, classes, imports and cwd without replay", async () => {
+durable("a new runtime restores data, aliases, functions, classes, imports and cwd without replay", async () => {
 	const dir = await directory();
 	const state = join(dir, "state");
 	const first = runtime(state);
@@ -47,7 +50,7 @@ os.chdir(${JSON.stringify(dir)})`, dir, bridge);
 	expect((await stat(state)).mode & 0o777).toBe(0o700);
 });
 
-test("crash and timeout recover the last checkpoint and warn about incomplete effects", async () => {
+durable("crash and timeout recover the last checkpoint and warn about incomplete effects", async () => {
 	const dir = await directory();
 	const r = runtime(join(dir, "state"));
 	await r.run("value = 7", dir, bridge);
@@ -59,7 +62,7 @@ test("crash and timeout recover the last checkpoint and warn about incomplete ef
 	expect((await r.run("print(value)", dir, bridge)).text).toContain("7");
 });
 
-test("ordinary errors checkpoint partial state and deletion survives restart", async () => {
+durable("ordinary errors checkpoint partial state and deletion survives restart", async () => {
 	const dir = await directory();
 	const r = runtime(dir);
 	await r.run("values = []; removed = 1", tmpdir(), bridge);
@@ -68,7 +71,7 @@ test("ordinary errors checkpoint partial state and deletion survives restart", a
 	expect((await r.run("print(values, 'removed' in globals())", tmpdir(), bridge)).text).toContain("[3] False");
 });
 
-test("unsupported values fail checkpointing explicitly and preserve the previous bytes", async () => {
+durable("unsupported values fail checkpointing explicitly and preserve the previous bytes", async () => {
 	const dir = await directory();
 	const r = runtime(dir);
 	await r.run("value = 7", tmpdir(), bridge);
@@ -80,7 +83,7 @@ test("unsupported values fail checkpointing explicitly and preserve the previous
 	expect((await r.run("print(value)", tmpdir(), bridge)).text).toContain("8");
 });
 
-test("corrupt checkpoints fail before executing any new cell and are never overwritten", async () => {
+durable("corrupt checkpoints fail before executing any new cell and are never overwritten", async () => {
 	const dir = await directory();
 	await writeFile(join(dir, "state.bin"), "corrupt");
 	const r = runtime(dir);
@@ -89,7 +92,7 @@ test("corrupt checkpoints fail before executing any new cell and are never overw
 	await expect(stat(join(dir, "must-not-exist"))).rejects.toThrow();
 });
 
-test("one session cannot have two checkpoint writers", async () => {
+durable("one session cannot have two checkpoint writers", async () => {
 	const dir = await directory();
 	const owner = runtime(dir);
 	await owner.run("value = 1", tmpdir(), bridge);
@@ -98,7 +101,7 @@ test("one session cannot have two checkpoint writers", async () => {
 	expect((await owner.run("print(value)", tmpdir(), bridge)).text).toBe("1\n");
 });
 
-test("switching sessions isolates state; explicit clearing is durable", async () => {
+durable("switching sessions isolates state; explicit clearing is durable", async () => {
 	const a = await directory(), b = await directory();
 	const r = runtime(a);
 	await r.run("value = 'a'", tmpdir(), bridge);
