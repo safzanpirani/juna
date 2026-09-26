@@ -23,7 +23,7 @@ Stock Pi gives the model four tools: `read`, `bash`, `edit` and `write`. juna ke
 | Web search | none | `web_search`: Exa results as query-selected highlights |
 | Reading a web page | `curl` through bash, raw HTML included | `web_fetch`: only the passages that answer the question, or the whole page on request |
 | Skills | every skill's name and description in every prompt | `skill_search` and `skill_load` on demand |
-| Tool output | passed through whole | empty results collapse, repeats become pointers, code reads fold, huge output spills to a file, Jev prunes the rest |
+| Tool output | passed through whole | colour codes and passing-test lines stripped, empty results collapse, repeats become pointers, code reads fold, huge output spills to a file, Jev prunes the rest |
 | Test runs | raw output | a `[juna: FAILED]` verdict line, and "same failure as before" on a rerun |
 | Context visibility | a percentage | `/ctx` breakdown, and a status line with the compaction mark and tokens saved |
 | Opt-in modes | none | Python CodeMode, async bash, computer use |
@@ -71,33 +71,34 @@ Four arms ran each task three times:
 
 Each run starts from a fresh copy of the fixture with no `.git`, so `git diff` cannot reveal the injected bug. The grading baseline lives in a separate repository outside the workspace. Graders retry a failing Jest run once, because a few commander tests are timing-sensitive under load.
 
-Model: `gpt-6-sol` at medium reasoning effort. Prices: $2 per million uncached input tokens, $0.20 cached, $10 output, and $0.042 for Jev input. Totals over nine runs per arm:
+Model: `gpt-6-sol` at medium reasoning effort. Prices: $2 per million uncached input tokens, $0.20 cached, $10 output, and $0.042 for Jev input. Totals over nine runs per arm. The juna column includes the [output reducers](#output-reducers); juna-lean was measured before they existed:
 
 | | Stock Pi, no skills | Stock Pi, skills | juna | juna-lean |
 |---|---:|---:|---:|---:|
 | Tasks passed | 9/9 | 9/9 | 9/9 | 9/9 |
-| Model requests | 107 | 84 | 80 | 84 |
-| Uncached input tokens | 213k | 353k | 229k | 205k |
-| Cached input tokens | 1,367k | 2,872k | 1,024k | 1,006k |
+| Model requests | 107 | 84 | 71 | 84 |
+| Uncached input tokens | 213k | 353k | 151k | 205k |
+| Cached input tokens | 1,367k | 2,872k | 621k | 1,006k |
 | Output tokens | 16k | 17k | 15k | 16k |
-| Jev input tokens | 0 | 0 | 454k | 424k |
-| **Total cost** | **$0.86** | **$1.45** | **$0.83** | **$0.79** |
-| Mean time per run | 93 s | 86 s | 86 s | 108 s |
+| Jev input tokens | 0 | 0 | 426k | 424k |
+| **Total cost** | **$0.86** | **$1.45** | **$0.59** | **$0.79** |
+| Mean time per run | 93 s | 86 s | 89 s | 108 s |
 
 Per task, mean cost per run:
 
 | Task | Stock Pi, no skills | Stock Pi, skills | juna | juna-lean |
 |---|---:|---:|---:|---:|
-| fix | $0.090 | $0.164 | $0.089 | $0.073 |
-| explain | $0.066 | $0.114 | $0.068 | $0.072 |
-| feature | $0.131 | $0.207 | $0.120 | $0.120 |
+| fix | $0.090 | $0.164 | $0.039 | $0.073 |
+| explain | $0.066 | $0.114 | $0.067 | $0.072 |
+| feature | $0.131 | $0.207 | $0.091 | $0.120 |
 
 What the numbers say:
 
-- **Against stock Pi with skills installed, juna cost 43% less** at the same pass rate. Most of the difference is the skill catalogue, which stock Pi re-sends on every request: cached input fell from 2.9M tokens to 1.0M.
-- **Against stock Pi with no skills, juna cost 3% less** and juna-lean 8% less. juna made 25% fewer requests, mostly from the batching rules in its `AGENTS.md`. These margins are within run-to-run noise: earlier passes of the same benchmark ranged from juna 8% cheaper to 6% more expensive.
+- **Against stock Pi with skills installed, juna cost 59% less** at the same pass rate. The skill catalogue, which stock Pi re-sends on every request, is most of the difference: cached input fell from 2.9M tokens to 0.6M.
+- **Against stock Pi with no skills, juna cost 31% less.** Before the output reducers, the same comparison measured between 8% cheaper and 6% more expensive across three passes, which is run-to-run noise. The reducers moved it outside that band. The fix task, where the model reads a 38-failure Jest run, fell from $0.089 per run to $0.039.
+- **juna made 34% fewer requests** than stock Pi without skills, mostly from the batching rules in its `AGENTS.md`.
 - **One prompt line removed the largest waste.** Before `AGENTS.md` told the model to call `skill_search` only for an unfamiliar tool or workflow, the model called it on almost every task and read up to 56k characters of skill text it did not need. After the line, it made no skill calls on these tasks.
-- **Jev cost $0.019** across the nine juna runs.
+- **Jev cost $0.018** across the nine juna runs.
 
 In these tasks the agents narrowed their own tool output with `rg`, `sed -n` and `tail`, so Jev pruning removed little. Pruning pays off most when a command prints a large result that the model did not filter first.
 
@@ -118,7 +119,7 @@ Same model, prices and three repeats. Mean cost per run:
 | price | $0.057 | $0.024 | $0.019 | Python `requests` against Google results and typesafe.ai, parsed with BeautifulSoup |
 | **Total, 9 runs** | **$0.37** | **$0.31** | **$0.23** | |
 
-Every arm passed all nine runs. gpt-6-sol did not need web tools: it reached every answer through bash. With them, juna cost 15% less than stock Pi. The saving came from the price task, where `web_search` and `web_fetch` returned about 6k characters against 51k of scraped HTML. On the changelog task, the model asked `web_fetch` for the full page (`full=true`) in two of three runs even after the highlights had covered every change, which made juna the most expensive arm on that task.
+Every arm passed all nine runs. gpt-6-sol did not need web tools: it reached every answer through bash. With them, juna cost 15% less than stock Pi. A second pass of juna on the same tasks cost $0.34, 7% less than stock Pi, so the margin is small. The saving came from the price task, where `web_search` and `web_fetch` returned about 6k characters against 51k of scraped HTML. On the changelog task, the model asked `web_fetch` for the full page (`full=true`) in two of three runs even after the highlights had covered every change, which made juna the most expensive arm on that task.
 
 juna-lean was cheapest, at 38% below stock Pi. It depends on the model knowing how to fetch narrowly through bash. gpt-6-sol does. A model that does not would print whole pages into its context or give up, which is why juna keeps the web tools by default.
 
@@ -127,6 +128,7 @@ juna-lean was cheapest, at 38% below stock Pi. It depends on the model knowing h
 
 | Stage | Measurement |
 |---|---|
+| Output reducers | A 38-failure Jest run: 76,628 characters to 8,204 (−89%), every failure still named. Replayed over the 90 benchmark sessions: Jest output 75% smaller, all tool output 13.6% smaller. Free and deterministic. |
 | Structural folding | juna's own `jev-prune.ts` read whole: 315 lines to 138, 3,377 tokens to 1,390 (−59%). Free and deterministic. |
 | Jev pruning | `cat extensions/*.ts` (417 lines) against a question about one function: 33% of characters removed in 1.7 s, and the function survived. |
 | Jev pruning, large file | A 164 KB model catalogue, asked for one entry: 47% removed in 3.9 s, all three mentions of the target kept. |
@@ -138,7 +140,7 @@ Jev pruning is conservative on purpose. It drops only chunks it is confident are
 
 ### What juna costs to run
 
-Jev bills input tokens only, at $42 per billion. A pruning call on a 40-chunk tool result reads about 12,000 tokens, which costs $0.0005. Across the nine coding runs above, Jev read 454k tokens in total, which cost $0.019. Without a TypeSafe key, juna skips the Jev stage and keeps every free stage.
+Jev bills input tokens only, at $42 per billion. A pruning call on a 40-chunk tool result reads about 12,000 tokens, which costs $0.0005. Across the nine coding runs above, Jev read 426k tokens in total, which cost $0.018. Without a TypeSafe key, juna skips the Jev stage and keeps every free stage.
 
 ## Setup guide for agents
 
@@ -311,13 +313,25 @@ Each tool result runs through a ladder of checks, cheapest first. The free stage
 
 | # | Stage | Cost | What it catches |
 |---|---|---|---|
+| 0 | Output reducers | free | Colour codes, progress redraws, passing-test lines, repeated failure summaries, HTML markup in bash output |
 | 1 | Empty-result collapse | free | A search that found nothing becomes one line |
 | 2 | Repeat dedup | free | Bytes this tool already returned this session |
 | 3 | Structural folding | free | A whole-file code read keeps signatures and folds bodies |
 | 4 | Spill | free | A hard ceiling, so one result can never eat the window |
 | 5 | Jev pruning | one API call | Everything else, judged against the task, plus a test verdict when the command ran tests |
 
-Results from `edit`, `write` and the skill tools are never touched, and neither are errors or images.
+Results from `edit`, `write` and the skill tools are never touched, and neither are images or errors from tools other than `bash`. A failing bash command goes through the pipeline like any other output and always keeps its `Command exited with code N` line.
+
+#### Output reducers
+
+Deterministic reducers run on every bash result before anything else. They need no API key and make no call.
+
+- **Colour and cursor codes** are removed. They were a quarter of all Jest output in the benchmark.
+- **Progress redraws** keep only the final state of a line that was rewritten with `\r`.
+- **Test output** loses its passing lines (Jest, vitest, `bun test`, pytest, `go test`, cargo). For Jest, the closing "Summary of all failing tests" is dropped, because it repeats every failure already printed. The first three failures and the first failure of each failing file are kept whole, and the rest are listed by title with a hint to rerun one by name. The summary totals always stay.
+- **HTML pages**, such as a raw `curl` of a website, become text with scripts, styles and markup removed.
+
+When Pi has already cut a long output down to its last 50 KB, the reducers read Pi's complete log instead, so the model sees the first failures rather than only the last ones. The reply names the log path.
 
 #### Structural folding
 
@@ -619,6 +633,7 @@ Each run gets a fresh copy of the fixture, a fresh profile, its own session dire
 | `config/` | The profile template: settings, a short `AGENTS.md`, four built-in tools |
 | `extensions/jev.ts` | Shared Jev client: config, retry, abort, usage log |
 | `extensions/jev-prune.ts` | The tool-output pipeline: hooks, question building, thresholds |
+| `extensions/reduce.ts` | Deterministic reducers: colour codes, redraws, test output, HTML |
 | `extensions/chunk.ts` | Pure splitting and reassembly |
 | `extensions/dedup.ts` | Output fingerprints, so repeats collapse to a pointer |
 | `extensions/fold.ts`, `structure.ts` | Fold planning and ast-grep parsing |

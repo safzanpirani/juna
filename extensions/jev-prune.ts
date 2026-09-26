@@ -13,6 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext, ExtensionHandler, ToolResultEvent, ToolResultEventResult } from "@earendil-works/pi-coding-agent";
 
 /** Event-bus channel for pruning a result that did not arrive through `tool_result`. */
@@ -26,6 +27,7 @@ import type { TextContent } from "@earendil-works/pi-ai";
 
 import { assemble, excerpt, splitBounded, type Chunk } from "./chunk.ts";
 import { OutputMemory, repeatMarker } from "./dedup.ts";
+import { reduceBashOutput } from "./reduce.ts";
 import { addSaved } from "./savings.ts";
 import { failureHead, isRunner, verdictLine, verifyQuestions } from "./verify.ts";
 import { spill, type SpillOptions } from "./spill.ts";
@@ -47,6 +49,36 @@ export function prunableError(toolName: string): boolean {
 export function exitStatus(text: string): string | undefined {
 	return /(?:^|\n)(Command exited with code \d+)\s*$/.exec(text)?.[1];
 }
+
+/**
+ * Run the deterministic reducers over a bash result. When Pi has already cut a
+ * long output to its tail, the complete log is reduced instead, so the model
+ * sees the first failures rather than only the last ones.
+ */
+export function reduceBash(text: string, event: Pick<ToolResultEvent, "details" | "input">, readFile: (path: string) => string = (path) => readFileSync(path, "utf8")) {
+	const command = String((event.input as { command?: unknown }).command ?? "");
+	const hint = /\bjest\b/.test(command) ? 'rerun it with npx jest -t "<test name>"' : "rerun that test by name";
+	const details = event.details as { truncation?: { truncated?: boolean }; fullOutputPath?: string } | undefined;
+	if (details?.truncation?.truncated && details.fullOutputPath) {
+		try {
+			const full = reduceBashOutput(readFile(details.fullOutputPath), hint);
+			if (full.applied.includes("tests") && full.text.length <= Math.max(text.length, SPILL_SAFE_CHARS)) {
+				return { text: `${full.text}\n\n[juna: reduced from the complete output at ${details.fullOutputPath}.]`, applied: full.applied };
+			}
+		} catch {
+			// The tail Pi kept is still there to reduce.
+		}
+	}
+	return reduceBashOutput(text, hint);
+}
+
+/** Set when the deterministic reducers changed a bash result. */
+interface ReduceState {
+	reduced?: { text: string; textPart: TextContent };
+}
+
+/** A reduced complete log up to this size replaces Pi's truncated tail. */
+const SPILL_SAFE_CHARS = 40_000;
 
 const NEVER_PRUNE = new Set(["edit", "write", "skill_load", "skill_search", "web_search", "web_fetch", "python", "ui_look", "ui_act", "ui_do"]);
 
@@ -255,6 +287,16 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	const prune: ExtensionHandler<ToolResultEvent, ToolResultEventResult> = async (event, ctx) => {
+		// Per call, because parallel tool results are pruned concurrently.
+		const state: ReduceState = {};
+		const result = await pipeline(event, ctx, state);
+		if (result !== undefined || !state.reduced) return result;
+		// No later stage changed anything, but the free reducers did.
+		const { text, textPart } = state.reduced;
+		return { content: event.content.map((part) => (part === textPart ? ({ type: "text", text } satisfies TextContent) : part)) };
+	};
+
+	const pipeline = async (event: ToolResultEvent, ctx: ExtensionContext, state: ReduceState): Promise<ToolResultEventResult | undefined> => {
 		if (NEVER_PRUNE.has(event.toolName)) return;
 		if (event.isError && !prunableError(event.toolName)) return;
 
@@ -264,10 +306,22 @@ export default function (pi: ExtensionAPI) {
 		// Text parts only. Images are passed through untouched.
 		const textParts = event.content.filter((part): part is TextContent => part.type === "text");
 		if (textParts.length !== 1 || event.content.length !== 1) return;
-		const original = textParts[0]!.text;
+		const raw = textParts[0]!.text;
+		const exitLine = event.isError ? exitStatus(raw) : undefined;
+
+		// 0. Deterministic reducers: colour codes, redraws, test-runner noise, HTML.
+		let original = raw;
+		if (event.toolName === "bash") {
+			const cleaned = reduceBash(raw, event);
+			if (cleaned.applied.length) {
+				original = exitLine && !cleaned.text.trimEnd().endsWith(exitLine) ? `${cleaned.text.trimEnd()}\n\n${exitLine}` : cleaned.text;
+				state.reduced = { text: original, textPart: textParts[0]! };
+				saved += addSaved(Math.max(0, raw.length - original.length));
+				ctx.ui.setStatus("juna", `reduced ${cleaned.applied.join("+")} (${Math.round(saved / 1000)}k chars saved)`);
+			}
+		}
 		if (original.length < settings.minChars) return;
 
-		const exitLine = event.isError ? exitStatus(original) : undefined;
 		const replace = (text: string) => {
 			// A failed command must still say it failed, whatever was cut.
 			const kept = exitLine && !text.trimEnd().endsWith(exitLine) ? `${text.trimEnd()}\n\n${exitLine}` : text;
