@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Launch Pi against the juna profile: its own config dir, its own settings, its
+# own extensions. Credentials and the model catalogue are shared with the normal
+# Pi profile by symlink, so juna never holds a second copy of a secret.
+#
+# Runs from anywhere. Pi inherits the caller's working directory; only juna's
+# own config templates are resolved against the repo.
+set -euo pipefail
+
+# Resolve through symlinks so ~/.local/bin/juna finds the repo it points at.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+	dir="$(cd -P "$(dirname "$src")" && pwd)"
+	src="$(readlink "$src")"
+	[[ $src != /* ]] && src="$dir/$src"
+done
+here="$(cd -P "$(dirname "$src")/.." && pwd)"
+
+main="${PI_MAIN_AGENT_DIR:-$HOME/.pi/agent}"
+export PI_CODING_AGENT_DIR="${JUNA_DIR:-$HOME/.pi/juna}"
+
+# juna is the quiet profile: no update banner at startup. Plain `pi` still
+# reports new versions, so nothing is actually hidden from you. Set
+# JUNA_VERSION_CHECK=1 to let the banner through here too.
+if [ "${JUNA_VERSION_CHECK:-0}" != "1" ]; then
+	export PI_SKIP_VERSION_CHECK=1
+fi
+
+mkdir -p "$PI_CODING_AGENT_DIR"
+[ -e "$PI_CODING_AGENT_DIR/AGENTS.md" ] || cp "$here/config/AGENTS.md" "$PI_CODING_AGENT_DIR/AGENTS.md"
+
+# The template carries {{JUNA}} rather than a fixed path, so the profile works
+# from whatever directory this repo was cloned into.
+if [ ! -e "$PI_CODING_AGENT_DIR/settings.json" ]; then
+	sed "s|{{JUNA}}|$here|g" "$here/config/settings.json" > "$PI_CODING_AGENT_DIR/settings.json"
+
+	# The skill picker lives in its own repo. Load it when it is there and run
+	# without it when it is not, in which case Pi keeps its skill catalogue in
+	# the prompt and everything else still works.
+	picker="${JUNA_SKILL_PICKER:-$here/../pi-jev-skill-picker/extensions/skill-jev.ts}"
+	if [ -f "$picker" ]; then
+		picker="$(cd -P "$(dirname "$picker")" && pwd)/$(basename "$picker")"
+		python3 - "$PI_CODING_AGENT_DIR/settings.json" "$picker" <<'PY'
+import json, sys
+path, picker = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+	settings = json.load(handle)
+if picker not in settings["extensions"]:
+	settings["extensions"].insert(0, picker)
+with open(path, "w") as handle:
+	json.dump(settings, handle, indent=2)
+	handle.write("\n")
+PY
+	fi
+fi
+
+for f in auth.json models.json models-store.json juna.json skill-jev.json trust.json; do
+	[ -e "$PI_CODING_AGENT_DIR/$f" ] || { [ -e "$main/$f" ] && ln -s "$main/$f" "$PI_CODING_AGENT_DIR/$f"; }
+done
+
+# CodeMode, async bash and computer use are opt-in per launch. Load after the profile's
+# prompt trimmer. Existing profiles do not need their settings rewritten.
+codemode="${JUNA_CODEMODE:-0}"
+async="${JUNA_ASYNC:-0}"
+cua="${JUNA_CUA:-0}"
+args=()
+parse_flags=1
+for arg in "$@"; do
+	if [ "$parse_flags" = "0" ]; then
+		args+=("$arg")
+		continue
+	fi
+	case "$arg" in
+		--) parse_flags=0; args+=("$arg") ;;
+		--codemode) codemode=1 ;;
+		--no-codemode) codemode=0 ;;
+		--async) async=1 ;;
+		--no-async) async=0 ;;
+		--cua) cua=1 ;;
+		--no-cua) cua=0 ;;
+		*) args+=("$arg") ;;
+	esac
+done
+ext=()
+[ "$codemode" = "1" ] && ext+=(-e "$here/extensions/python/index.ts")
+[ "$async" = "1" ] && ext+=(-e "$here/extensions/async-bash.ts")
+[ "$cua" = "1" ] && ext+=(-e "$here/extensions/cua/index.ts")
+exec pi ${ext[@]+"${ext[@]}"} ${args[@]+"${args[@]}"}

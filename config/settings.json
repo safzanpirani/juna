@@ -1,0 +1,19 @@
+{
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4.1-flash",
+  "defaultTools": [
+    "bash",
+    "read",
+    "edit",
+    "write"
+  ],
+  "extensions": [
+    "{{JUNA}}/extensions/jev-trim.ts",
+    "{{JUNA}}/extensions/jev-prune.ts",
+    "{{JUNA}}/extensions/jev-meter.ts",
+    "{{JUNA}}/extensions/jev-ctx.ts",
+    "{{JUNA}}/extensions/jev-search.ts"
+  ],
+  "skills": [],
+  "enableSkillCommands": false
+}

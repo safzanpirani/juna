@@ -1,0 +1,30 @@
+{
+  "name": "juna",
+  "version": "0.1.0",
+  "description": "A minimal Pi coding agent profile that wraps Jev (TypeSafe System One) around the context pipeline, starting with pruning tool output to what the current task needs.",
+  "keywords": ["pi", "pi-extension", "context", "typesafe", "jev", "system-one"],
+  "license": "MIT",
+  "type": "module",
+  "files": ["extensions", "config", "bin", "README.md", "LICENSE"],
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "test": "bun test test/",
+    "check": "bun run typecheck && bun test test/"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "pi": {
+    "extensions": ["extensions/jev-prune.ts"]
+  },
+  "devDependencies": {
+    "@ast-grep/napi": "^0.45.3",
+    "@earendil-works/pi-ai": "0.86.1",
+    "@earendil-works/pi-coding-agent": "0.86.1",
+    "@earendil-works/pi-tui": "0.86.1",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^26.2.0",
+    "gpt-tokenizer": "^4.0.0",
+    "typescript": "^5.9.3"
+  }
+}
