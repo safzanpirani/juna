@@ -224,14 +224,30 @@ Then edit `defaultProvider` and `defaultModel` in `~/.pi/juna/settings.json`, or
 
 **Check:** `juna -p "Reply with exactly: OK"` prints `OK`.
 
-### Step 6. Add the API keys
+### Step 6. Set up Jev and Exa
 
-juna uses two optional keys. Both live in the profile, never in the repo.
+juna calls two outside services. Both are optional, and both keys live in the profile, never in the repo.
 
-| Key | Used for | Get one at |
-|---|---|---|
-| TypeSafe | Jev pruning, test verdicts, skill ranking, search ranking | https://typesafe.ai |
-| Exa | `web_search` and `web_fetch` | https://exa.ai |
+| Service | What juna uses it for | Without a key | Cost |
+|---|---|---|---|
+| [TypeSafe](https://typesafe.ai) (the Jev model) | Tool-output pruning, test verdicts, `skill_search` ranking, `web_fetch` pruning, computer-use picks | The free stages still run: output reducers, empty-result collapse, repeat dedup, code folding and spill. Nothing is pruned by relevance, and `skill_search` cannot rank skills | $42 per billion input tokens; output is free. The coding benchmark spent $0.018 on Jev across nine tasks |
+| [Exa](https://exa.ai) | `web_search` and `web_fetch` | Both tools report that they have no key. The model can still reach the web through `bash` | Billed per request. A `web_fetch` page read costs $0.001 |
+
+#### 6a. Get a TypeSafe key
+
+1. Open https://console.typesafe.ai/keys and sign in.
+2. Create an API key and copy it.
+
+The [Playground](https://console.typesafe.ai/playground) on the same console tries Jev without code.
+
+#### 6b. Get an Exa key
+
+1. Open https://dashboard.exa.ai/api-keys and sign in.
+2. Create an API key and copy it.
+
+#### 6c. Store the keys
+
+Write both keys into `juna.json` in the profile. If the file already exists, add the two fields to it instead of replacing it.
 
 ```bash
 cat > ~/.pi/juna/juna.json <<'JSON'
@@ -243,11 +259,38 @@ JSON
 chmod 600 ~/.pi/juna/juna.json
 ```
 
-`TYPESAFE_API_KEY` and `EXA_API_KEY` in the environment also work and take precedence over the file.
+Leave out either field to skip that service. `TYPESAFE_API_KEY` and `EXA_API_KEY` in the environment also work, and they take precedence over the file.
 
-Either key can be left out. Without the TypeSafe key, the free stages still run: empty results collapse, repeats become pointers, code reads fold and oversized output spills to a file. Only the Jev stage goes quiet. Without the Exa key, `web_search` reports that it has no key. Nothing else changes.
+The skill picker reads its key from `~/.pi/juna/skill-jev.json`. When that file does not exist, the launcher links it to `juna.json` on the next `juna` run, so one file serves both. Run `juna --version` once after writing the file to make the link.
 
-**Check:** `ls -l ~/.pi/juna/juna.json` shows `-rw-------`.
+Never put a key in the repo, a commit or a command line. If a key was pasted into a chat to set this up, rotate it afterwards in the console it came from.
+
+#### 6d. Check both keys
+
+```bash
+juna --version
+bun scripts/check-keys.ts
+```
+
+The script reads the keys exactly as juna does and makes one real call to each service, about $0.001 in total. It never prints a key.
+
+**Check:** with both keys set, it prints:
+
+```
+TypeSafe: OK (jev-latest, answered yes with probability 0.99)
+Skill picker: key found
+Exa: OK (read https://example.com, 135 characters)
+```
+
+and exits 0. A service with no key prints `no key` and does not fail the check. Anything else exits 1:
+
+| Output | Cause |
+|---|---|
+| `TypeSafe: FAILED. TypeSafe returned 401` | The TypeSafe key is wrong, revoked, or has a stray character |
+| `Exa: FAILED. Exa returned 401` | The Exa key is wrong or revoked |
+| `Skill picker: no key` | `skill-jev.json` is missing. Run `juna --version` once, or set `TYPESAFE_API_KEY` |
+| `TypeSafe: FAILED. TypeSafe request timed out.` | No network route to `api.typesafe.ai`, or a proxy blocks it |
+| `no key` for a key you did set | The file is not at `~/.pi/juna/juna.json`, the field name is wrong (`apiKey`, `exaApiKey`), or the JSON is invalid |
 
 ### Step 7. Optional: Python for CodeMode
 
@@ -276,7 +319,7 @@ juna -p "Run this exact bash command: ls -la /usr/bin /usr/lib | head -400. Then
 grep -o '\[juna[^]]*' $(ls -t ~/.pi/juna/sessions/*/*.jsonl | head -1) | head
 ```
 
-**Check:** with a TypeSafe key set, the grep prints at least one `[juna pruned lines …` marker. If it prints nothing, confirm the key from step 6 is readable and that the output was over 3,000 characters.
+**Check:** with a TypeSafe key set, the grep prints at least one `[juna pruned lines …` marker. If it prints nothing, run `bun scripts/check-keys.ts` and confirm the output was over 3,000 characters.
 
 With an Exa key, one more:
 
@@ -621,7 +664,8 @@ Each run gets a fresh copy of the fixture, a fresh profile, its own session dire
 | `bun run check` fails on a fresh clone | bun older than 1.4, `bun install` skipped, or no Python venv for the CodeMode tests |
 | A read is folded but the file is not TypeScript | Expected. ast-grep ships TS, TSX and JS only; other files are never folded |
 | `web_search` says it has no key | No `exaApiKey` in `juna.json` and no `EXA_API_KEY` |
-| Search results look unranked | No TypeSafe key, so Exa's order is used |
+| `skill_search` says there is no TypeSafe key | `~/.pi/juna/skill-jev.json` is missing. Run `juna --version` once to link it to `juna.json` |
+| A key is set but a feature stays off | Run `bun scripts/check-keys.ts`; its output names the cause |
 | Edits to `config/` have no effect | The profile holds copies. Delete the copied file and run `juna` again |
 | `--cua` fails with `permissions_pending` | macOS grants are incomplete. Rerun `cua-driver permissions grant` |
 
@@ -647,7 +691,7 @@ Each run gets a fresh copy of the fixture, a fresh profile, its own session dire
 | `extensions/python/` | Opt-in CodeMode |
 | `extensions/async-bash.ts` | Opt-in async bash |
 | `extensions/cua/` | Opt-in computer use |
-| `scripts/` | Context report, session anatomy, pruning demo, installer |
+| `scripts/` | Context report, session anatomy, pruning demo, key check, installer |
 | `bench/` | The stock-vs-juna benchmark |
 
 ## License

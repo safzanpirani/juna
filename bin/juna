@@ -58,6 +58,12 @@ for f in auth.json models.json models-store.json juna.json skill-jev.json trust.
 	[ -e "$PI_CODING_AGENT_DIR/$f" ] || { [ -e "$main/$f" ] && ln -s "$main/$f" "$PI_CODING_AGENT_DIR/$f"; }
 done
 
+# The skill picker reads its TypeSafe key from skill-jev.json. With no such file,
+# point it at juna.json, so one key file serves both.
+if [ ! -e "$PI_CODING_AGENT_DIR/skill-jev.json" ] && [ -e "$PI_CODING_AGENT_DIR/juna.json" ]; then
+	ln -s juna.json "$PI_CODING_AGENT_DIR/skill-jev.json"
+fi
+
 # CodeMode, async bash and computer use are opt-in per launch. Load after the profile's
 # prompt trimmer. Existing profiles do not need their settings rewritten.
 codemode="${JUNA_CODEMODE:-0}"
