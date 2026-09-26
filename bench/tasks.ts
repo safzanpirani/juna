@@ -21,7 +21,9 @@ export interface Task {
 	/** Break or prepare the workspace before the agent starts. */
 	setup?: (dir: string) => void;
 	/** `changed` lists files that differ from the state the agent started in. */
-	grade: (dir: string, sh: (command: string) => { code: number; out: string }, changed: (paths: string) => string[]) => Grade;
+	grade?: (dir: string, sh: (command: string) => { code: number; out: string }, changed: (paths: string) => string[]) => Grade;
+	/** For graders that fetch their ground truth. */
+	gradeAsync?: (dir: string) => Promise<Grade>;
 }
 
 /** Run Jest, and once more on failure: a few commander tests are timing-sensitive under load. */

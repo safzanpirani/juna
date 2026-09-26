@@ -139,7 +139,8 @@ export function crawlFailure(statuses: unknown): string {
 
 /**
  * Fetch one page as text. Exa renders the page and strips the furniture, which
- * is the part a plain HTTP GET would leave for us to do badly.
+ * is the part a plain HTTP GET would leave for us to do badly. With a
+ * highlights query, only the passages that answer it come back.
  */
 export async function fetchPage(
 	url: string,
@@ -147,16 +148,24 @@ export async function fetchPage(
 	config: ExaConfig,
 	signal?: AbortSignal,
 	fetchImpl: typeof fetch = fetch,
+	highlightsQuery?: string,
 ): Promise<Page> {
 	if (!config.apiKey) {
 		throw new ExaError('No Exa API key. Set EXA_API_KEY, or add "exaApiKey" to the profile\'s juna.json.');
 	}
 
 	const timeout = AbortSignal.timeout(config.timeoutMs);
+	// Highlights ask Exa for only the passages that answer the query, which is
+	// what keeps a long page from entering the context whole.
+	const contents = highlightsQuery ? { highlights: { query: highlightsQuery, dynamic: true } } : { text: { maxCharacters } };
 	const response = await fetchImpl(contentsEndpoint(config), {
 		method: "POST",
-		headers: { "x-api-key": config.apiKey, "Content-Type": "application/json" },
-		body: JSON.stringify({ urls: [url], text: { maxCharacters } }),
+		headers: {
+			"x-api-key": config.apiKey,
+			"Content-Type": "application/json",
+			...(highlightsQuery ? { "Exa-Beta": DYNAMIC_HIGHLIGHTS_BETA } : {}),
+		},
+		body: JSON.stringify({ urls: [url], ...contents }),
 		signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
 	});
 	if (!response.ok) {
@@ -165,7 +174,8 @@ export async function fetchPage(
 
 	const body = (await response.json()) as { results?: unknown; statuses?: unknown };
 	const first = Array.isArray(body.results) ? (body.results[0] as Record<string, unknown> | undefined) : undefined;
-	const text = typeof first?.text === "string" ? first.text : undefined;
+	const highlights = Array.isArray(first?.highlights) ? (first.highlights as unknown[]).filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "") : [];
+	const text = highlightsQuery ? (highlights.length ? highlights.join("\n\n") : undefined) : typeof first?.text === "string" ? first.text : undefined;
 	if (!text?.trim()) throw new ExaError(`${url}: ${crawlFailure(body.statuses)}`);
 	return { title: trimmed(first?.title) ?? url, url: trimmed(first?.url) ?? url, text };
 }

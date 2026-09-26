@@ -6,6 +6,7 @@ juna wraps [TypeSafe Jev](https://docs.typesafe.ai), a small and cheap judgment 
 
 juna never breaks the provider prompt cache. Every saving below comes on top of normal prompt caching, never at its expense.
 
+- [What juna adds to stock Pi](#what-juna-adds-to-stock-pi)
 - [What it saves](#what-it-saves)
 - [Setup guide for agents](#setup-guide-for-agents)
 - [Features](#features)
@@ -13,9 +14,23 @@ juna never breaks the provider prompt cache. Every saving below comes on top of 
 - [Measuring it yourself](#measuring-it-yourself)
 - [Troubleshooting](#troubleshooting)
 
+## What juna adds to stock Pi
+
+Stock Pi gives the model four tools: `read`, `bash`, `edit` and `write`. juna keeps those four and adds the rest of this table.
+
+| | Stock Pi | juna |
+|---|---|---|
+| Web search | none | `web_search`: Exa results as query-selected highlights |
+| Reading a web page | `curl` through bash, raw HTML included | `web_fetch`: only the passages that answer the question, or the whole page on request |
+| Skills | every skill's name and description in every prompt | `skill_search` and `skill_load` on demand |
+| Tool output | passed through whole | empty results collapse, repeats become pointers, code reads fold, huge output spills to a file, Jev prunes the rest |
+| Test runs | raw output | a `[juna: FAILED]` verdict line, and "same failure as before" on a rerun |
+| Context visibility | a percentage | `/ctx` breakdown, and a status line with the compaction mark and tokens saved |
+| Opt-in modes | none | Python CodeMode, async bash, computer use |
+
 ## What it saves
 
-The numbers come from three measurements. Each one can be reproduced with a script in this repo.
+The numbers come from four measurements. Each one can be reproduced with a script in this repo.
 
 ### 1. The prompt Pi sends on every request
 
@@ -23,23 +38,23 @@ Pi re-sends its system prompt and tool schemas on every request. `scripts/contex
 
 | Setup | Stock Pi | juna | Change |
 |---|---:|---:|---:|
-| No skills installed | 1,355 tok | 1,850 tok | +495 tok |
-| 179 skills installed | 25,794 tok | 1,850 tok | −23,944 tok (−93%) |
+| No skills installed | 1,355 tok | 1,923 tok | +568 tok |
+| About 160 skills installed | 23,016 tok | 1,922 tok | −21,094 tok (−92%) |
 
-With no skills installed, juna's prompt is larger. It adds four tools stock Pi does not have (`web_search`, `web_fetch`, `skill_search`, `skill_load`, 509 tokens of schema) and a 435-token `AGENTS.md` with batching rules. With a skill catalogue installed, stock Pi lists every skill's name and description in the prompt. juna removes that list and gives the model `skill_search` instead.
+With no skills installed, juna's prompt is larger. It adds four tools stock Pi does not have (`web_search`, `web_fetch`, `skill_search`, `skill_load`, 534 tokens of schema) and a 477-token `AGENTS.md` with batching rules. With a skill catalogue installed, stock Pi lists every skill's name and description in the prompt. juna removes that list and gives the model `skill_search` instead.
 
-That prefix is paid on every request of every session. The 24k-token catalogue costs this much in a 30-request session:
+That prefix is paid on every request of every session. The 21k-token catalogue costs this much in a 30-request session:
 
 | Model | All requests cached | All requests uncached |
 |---|---:|---:|
-| gpt-6-sol ($0.20 / $2 per M) | $0.14 | $1.44 |
-| gpt-6-astra ($1 / $10 per M) | $0.72 | $7.18 |
+| gpt-6-sol ($0.20 / $2 per M) | $0.13 | $1.27 |
+| gpt-6-astra ($1 / $10 per M) | $0.63 | $6.33 |
 
 Real sessions land between the two columns, because provider caches miss.
 
-### 2. End-to-end tasks, stock Pi vs juna
+### 2. Coding tasks, stock Pi vs juna
 
-`bench/run.ts` runs the same coding tasks through stock Pi and juna with the same model and reasoning effort. Code grades every run afterwards.
+`bench/run.ts` runs the same tasks through stock Pi and juna with the same model and reasoning effort. Code grades every run afterwards.
 
 The fixture is [commander.js](https://github.com/tj/commander.js) v14.0.0: a 2,778-line `lib/command.js` and a 1,365-test Jest suite. The three tasks:
 
@@ -47,45 +62,68 @@ The fixture is [commander.js](https://github.com/tj/commander.js) v14.0.0: a 2,7
 - **explain**: name the methods and settings that decide whether an unknown option is an error, written to `ANSWER.md`. The grader checks for four required names.
 - **feature**: add a chainable `envPrefix()` method with typings and tests. A hidden six-test file grades it.
 
-Three arms ran each task three times, 27 runs in all:
+Four arms ran each task three times:
 
 - **Stock Pi, no skills**: a fresh profile with default settings and `--no-skills`. This is the smallest prompt stock Pi can send.
-- **Stock Pi, skills**: the same profile with skill discovery on. The test machine has 179 skills installed, so every request carries the skill catalogue.
+- **Stock Pi, skills**: the same profile with skill discovery on, so every request carries the test machine's skill catalogue (about 23k tokens when this ran).
 - **juna**: a freshly seeded juna profile with the skill picker.
+- **juna-lean**: juna without `web_search` and `web_fetch`, told to fetch web data through narrow bash commands. See [Running without the web tools](#running-without-the-web-tools).
 
 Each run starts from a fresh copy of the fixture with no `.git`, so `git diff` cannot reveal the injected bug. The grading baseline lives in a separate repository outside the workspace. Graders retry a failing Jest run once, because a few commander tests are timing-sensitive under load.
 
 Model: `gpt-6-sol` at medium reasoning effort. Prices: $2 per million uncached input tokens, $0.20 cached, $10 output, and $0.042 for Jev input. Totals over nine runs per arm:
 
-| | Stock Pi, no skills | Stock Pi, skills | juna |
-|---|---:|---:|---:|
-| Tasks passed | 9/9 | 9/9 | 9/9 |
-| Model requests | 107 | 84 | 77 |
-| Uncached input tokens | 213k | 353k | 230k |
-| Cached input tokens | 1,367k | 2,872k | 788k |
-| Output tokens | 16k | 17k | 16k |
-| Jev input tokens | 0 | 0 | 402k |
-| **Total cost** | **$0.86** | **$1.45** | **$0.79** |
-| Mean time per run | 93 s | 86 s | 96 s |
+| | Stock Pi, no skills | Stock Pi, skills | juna | juna-lean |
+|---|---:|---:|---:|---:|
+| Tasks passed | 9/9 | 9/9 | 9/9 | 9/9 |
+| Model requests | 107 | 84 | 80 | 84 |
+| Uncached input tokens | 213k | 353k | 229k | 205k |
+| Cached input tokens | 1,367k | 2,872k | 1,024k | 1,006k |
+| Output tokens | 16k | 17k | 15k | 16k |
+| Jev input tokens | 0 | 0 | 454k | 424k |
+| **Total cost** | **$0.86** | **$1.45** | **$0.83** | **$0.79** |
+| Mean time per run | 93 s | 86 s | 86 s | 108 s |
 
 Per task, mean cost per run:
 
-| Task | Stock Pi, no skills | Stock Pi, skills | juna |
-|---|---:|---:|---:|
-| fix | $0.090 | $0.164 | $0.080 |
-| explain | $0.066 | $0.114 | $0.072 |
-| feature | $0.131 | $0.207 | $0.111 |
+| Task | Stock Pi, no skills | Stock Pi, skills | juna | juna-lean |
+|---|---:|---:|---:|---:|
+| fix | $0.090 | $0.164 | $0.089 | $0.073 |
+| explain | $0.066 | $0.114 | $0.068 | $0.072 |
+| feature | $0.131 | $0.207 | $0.120 | $0.120 |
 
 What the numbers say:
 
-- **Against stock Pi with skills installed, juna cost 46% less** at the same pass rate. Most of the difference is the skill catalogue, which stock Pi re-sends on every request: cached input fell from 2.9M tokens to 0.8M.
-- **Against stock Pi with no skills, juna cost 8% less.** juna made 28% fewer requests, mostly from the batching rules in its `AGENTS.md`, and sent 42% fewer cached tokens. This margin is within run-to-run noise. An earlier 18-run pass of the same benchmark measured juna 6% more expensive than stock Pi without skills.
-- **Jev cost $0.017** across all nine juna runs.
-- **Wall time was about the same.** Each Jev call adds a few hundred milliseconds, and fewer requests win some of that back.
+- **Against stock Pi with skills installed, juna cost 43% less** at the same pass rate. Most of the difference is the skill catalogue, which stock Pi re-sends on every request: cached input fell from 2.9M tokens to 1.0M.
+- **Against stock Pi with no skills, juna cost 3% less** and juna-lean 8% less. juna made 25% fewer requests, mostly from the batching rules in its `AGENTS.md`. These margins are within run-to-run noise: earlier passes of the same benchmark ranged from juna 8% cheaper to 6% more expensive.
+- **One prompt line removed the largest waste.** Before `AGENTS.md` told the model to call `skill_search` only for an unfamiliar tool or workflow, the model called it on almost every task and read up to 56k characters of skill text it did not need. After the line, it made no skill calls on these tasks.
+- **Jev cost $0.019** across the nine juna runs.
 
 In these tasks the agents narrowed their own tool output with `rg`, `sed -n` and `tail`, so Jev pruning removed little. Pruning pays off most when a command prints a large result that the model did not filter first.
 
-### 3. Individual stages
+### 3. Web tasks, stock Pi vs juna
+
+Stock Pi has no web tool. These tasks need live information, to see whether the model fails without one or finds another way. Graders fetch the correct answer when grading, so nothing is hard-coded.
+
+- **npm**: the newest `commander` release on npm and its publish date.
+- **changelog**: every change in the upstream changelog since 14.0.0, with its pull request number. Fifteen PR numbers prove the page was read.
+- **price**: what TypeSafe charges for Jev input tokens, from TypeSafe's own website. No URL is given, and the price sits in a 580 KB page of mostly markup.
+
+Same model, prices and three repeats. Mean cost per run:
+
+| Task | Stock Pi | juna | juna-lean | How stock Pi got there |
+|---|---:|---:|---:|---|
+| npm | $0.011 | $0.011 | $0.009 | `npm view commander version time --json`, or `curl` to the registry |
+| changelog | $0.053 | $0.069 | $0.048 | `curl <raw CHANGELOG.md> \| head -110` |
+| price | $0.057 | $0.024 | $0.019 | Python `requests` against Google results and typesafe.ai, parsed with BeautifulSoup |
+| **Total, 9 runs** | **$0.37** | **$0.31** | **$0.23** | |
+
+Every arm passed all nine runs. gpt-6-sol did not need web tools: it reached every answer through bash. With them, juna cost 15% less than stock Pi. The saving came from the price task, where `web_search` and `web_fetch` returned about 6k characters against 51k of scraped HTML. On the changelog task, the model asked `web_fetch` for the full page (`full=true`) in two of three runs even after the highlights had covered every change, which made juna the most expensive arm on that task.
+
+juna-lean was cheapest, at 38% below stock Pi. It depends on the model knowing how to fetch narrowly through bash. gpt-6-sol does. A model that does not would print whole pages into its context or give up, which is why juna keeps the web tools by default.
+
+### 4. Individual stages
+
 
 | Stage | Measurement |
 |---|---|
@@ -100,7 +138,7 @@ Jev pruning is conservative on purpose. It drops only chunks it is confident are
 
 ### What juna costs to run
 
-Jev bills input tokens only, at $42 per billion. A pruning call on a 40-chunk tool result reads about 12,000 tokens, which costs $0.0005. Across the nine benchmark runs above, Jev read 402k tokens in total, which cost $0.017. Without a TypeSafe key, juna skips the Jev stage and keeps every free stage.
+Jev bills input tokens only, at $42 per billion. A pruning call on a 40-chunk tool result reads about 12,000 tokens, which costs $0.0005. Across the nine coding runs above, Jev read 454k tokens in total, which cost $0.019. Without a TypeSafe key, juna skips the Jev stage and keeps every free stage.
 
 ## Setup guide for agents
 
@@ -226,7 +264,7 @@ python3 -m venv ~/.pi/juna/python-venv
 bun scripts/context-report.ts --stock
 ```
 
-This costs nothing. It captures the turn-0 payload of stock Pi and of juna and exits before either request is sent. With skills installed, the last line shows a large saving. With no skills installed, juna comes out about 500 tokens larger, which is expected (see [What it saves](#what-it-saves)).
+This costs nothing. It captures the turn-0 payload of stock Pi and of juna and exits before either request is sent. With skills installed, the last line shows a large saving. With no skills installed, juna comes out about 570 tokens larger, which is expected (see [What it saves](#what-it-saves)).
 
 Then run one real turn that produces long output:
 
@@ -342,7 +380,9 @@ Trimming pins the first prompt for the session. Changes to prompt inputs such as
 
 ### Batching instructions
 
-juna's `AGENTS.md` (435 tokens) tells the model that the unit of cost is the turn. Independent calls go in one response. Verification happens once per batch. Output requests stay narrow. In a controlled test with gpt-6-astra, two added batching rules cut requests by 27% and total tokens by 19% across eight runs.
+juna's `AGENTS.md` (477 tokens) tells the model that the unit of cost is the turn. Independent calls go in one response. Verification happens once per batch. Output requests stay narrow. In a controlled test with gpt-6-astra, two added batching rules cut requests by 27% and total tokens by 19% across eight runs.
+
+One line limits `skill_search` to tasks that name a tool, service or workflow the model does not already know. Without it, gpt-6-sol searched skills on almost every task and read up to 56k characters of skill text per call.
 
 ### Skill search
 
@@ -352,9 +392,21 @@ With the skill picker installed, the model sees two tools instead of a catalogue
 
 `web_search` asks Exa for highlights across the requested results (four by default, up to ten). The query controls which evidence Exa selects, so include required facts, constraints and edge cases in it. juna keeps the returned highlights whole, including headings and code indentation.
 
-`web_fetch` returns page text up to 60,000 characters. Without a `question`, the text passes through unchanged. Use that mode to read API docs, schemas and examples. With a `question`, Jev pruning removes only boilerplate it is confident is irrelevant. Code blocks, uncertain passages and unscored chunks survive.
+`web_fetch` returns the passages of a page that answer the model's `question`, or the user's request when the model gives none. Exa selects them with dynamic highlights, for $0.001 per page. On the commander changelog that meant about 4,000 characters instead of 60,000, with all fifteen changes kept. When highlights come back empty or tiny, the whole page is fetched instead.
 
-The two tools cost 242 tokens of schema.
+`full=true` returns the whole page as text, up to 60,000 characters. Use it for API references, schemas and complete examples. With `full=true` and a `question`, Jev pruning removes only boilerplate it is confident is irrelevant. Code blocks, uncertain passages and unscored chunks survive.
+
+The two tools cost 267 tokens of schema.
+
+#### Running without the web tools
+
+A model that already fetches narrowly through bash can skip the web tools. Add this line to `~/.pi/juna/AGENTS.md`:
+
+```
+- There is no web tool. Get web data through bash and print only what answers the question: `curl -fsSL URL | rg -n 'pattern'`, `| sed -n '1,80p'`, `npm view`, `gh api`, or a short Python script that prints the fields you need. Never print a whole page.
+```
+
+Then launch with `juna --exclude-tools web_search,web_fetch`. With gpt-6-sol this was the cheapest setup in both benchmarks. Check that your model follows the line before relying on it.
 
 Dynamic highlights use the `Exa-Beta: dynamic-highlights-2026-08-28` preview header. A crawl failure reports Exa's status, such as `CRAWL_NOT_FOUND (HTTP 404)`.
 
@@ -525,7 +577,7 @@ It prints each chunk's score, confidence and verdict to stderr and the pruned ou
 | `bun scripts/context-report.ts --stock [--no-skills]` | Turn-0 payload of stock Pi against juna, by prompt section and tool schema | free |
 | `bun scripts/context-report.ts --diff` | juna with and without its extensions | free |
 | `bun scripts/session-anatomy.ts <session.jsonl>` | Token share per message kind in a real session | free |
-| `bench/run.ts` + `bench/report.ts` | End-to-end stock Pi vs juna on graded tasks | model and Jev spend |
+| `bench/run.ts` + `bench/report.ts` | End-to-end stock Pi vs juna on graded coding (`--suite code`) or web (`--suite web`) tasks | model, Jev and Exa spend |
 
 The context report runs Pi with `scripts/dump-context.ts`, which captures the provider payload in `before_provider_request` and exits before the request leaves the machine. Token counts use `gpt-tokenizer`. They are estimates, not provider billing.
 
@@ -538,7 +590,7 @@ bun bench/run.ts --fixture /tmp/commander --out /tmp/juna-bench \
 bun bench/report.ts /tmp/juna-bench/results.json --input 2 --output 10 --cache-read 0.2
 ```
 
-`fixture.sh` caps Jest at two workers per run. Without the cap, many agents running the suite at once start one worker per core each and can exhaust memory. The runner also waits before starting a run while free disk is under 3 GB (`--min-free-gb`). `--arms stock,juna` skips the stock-with-skills arm.
+`fixture.sh` caps Jest at two workers per run. Without the cap, many agents running the suite at once start one worker per core each and can exhaust memory. The runner also waits before starting a run while free disk is under 3 GB (`--min-free-gb`). `--arms` picks from `stock`, `stock-skills`, `juna` and `juna-lean`. The report lists each run's web tool calls and the network commands it ran through bash.
 
 Each run gets a fresh copy of the fixture, a fresh profile, its own session directory and its own Jev usage log under `--out`. Stock Pi borrows credentials from `~/.pi/agent`. Set the prices to your model's rates per million tokens.
 

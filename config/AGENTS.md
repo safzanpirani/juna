@@ -12,3 +12,4 @@ Context is the scarce resource. The unit of cost is the turn, not the call.
 - Do not restate what a tool just returned.
 - `edit` matches `oldText` against the original file exactly. Keep each one minimal but unique, never overlapping, and put several edits to one file in a single call.
 - Use `write` only for new files or full rewrites.
+- Call `skill_search` only when the task names a tool, service or workflow you do not already know how to use. Ordinary coding, test fixing, code reading and web lookups need no skill.

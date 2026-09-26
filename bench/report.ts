@@ -28,6 +28,11 @@ interface Result {
 	toolResultChars: number;
 	jevInputTokens: number;
 	jevRequests: number;
+	name?: string;
+	note?: string;
+	webToolCalls?: number;
+	bashNetworkCalls?: number;
+	networkCommands?: string[];
 }
 
 const path = process.argv[2];
@@ -41,8 +46,8 @@ const k = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : Math.round(
 const pct = (a: number, b: number) => (a === 0 ? "n/a" : `${b <= a ? "−" : "+"}${Math.abs(Math.round(((b - a) / a) * 100))}%`);
 
 const tasks = [...new Set(results.map((r) => r.task))];
-const ARMS = ["stock", "stock-skills", "juna"].filter((arm) => results.some((r) => r.arm === arm));
-const LABEL: Record<string, string> = { stock: "Stock Pi, no skills", "stock-skills": "Stock Pi, skills", juna: "juna" };
+const ARMS = ["stock", "stock-skills", "juna", "juna-lean"].filter((arm) => results.some((r) => r.arm === arm));
+const LABEL: Record<string, string> = { stock: "Stock Pi, no skills", "stock-skills": "Stock Pi, skills", juna: "juna", "juna-lean": "juna-lean" };
 console.log(`Prices per million tokens: input $${price.input}, cached input $${price.cacheRead}, output $${price.output}, Jev input $${price.jev}.\n`);
 console.log("| Task | Arm | Passed | Requests | Uncached in | Cached in | Output | Tool output (chars) | Jev in | Cost | Time |");
 console.log("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
@@ -77,3 +82,13 @@ line("Tool output characters", (r) => r.toolResultChars, k);
 line("Jev input tokens", (r) => r.jevInputTokens, k);
 line("Total cost", cost, (n) => `$${n.toFixed(2)}`);
 line("Wall time", (r) => r.seconds, (n) => `${Math.round(n)}s`);
+
+if (results.some((r) => r.webToolCalls !== undefined)) {
+	console.log("\nHow each run reached the web: juna's web tools, or network commands through bash.\n");
+	console.log("| Run | Passed | web_search/web_fetch | bash network calls | First network command | Grade |");
+	console.log("|---|---|---:|---:|---|---|");
+	for (const r of [...results].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))) {
+		const first = (r.networkCommands ?? [])[0]?.replace(/\|/g, "\\|").slice(0, 90) ?? "";
+		console.log(`| ${r.name} | ${r.passed ? "yes" : "no"} | ${r.webToolCalls ?? 0} | ${r.bashNetworkCalls ?? 0} | ${first ? `\`${first}\`` : ""} | ${(r.note ?? "").replace(/\|/g, "/")} |`);
+	}
+}

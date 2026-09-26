@@ -12,6 +12,8 @@
  * - stock-skills: the same profile with skill discovery on, so the prompt lists
  *                 every skill installed on this machine, as stock Pi does.
  * - juna:         a freshly seeded profile, exactly as `juna` would build it.
+ * - juna-lean:    juna without the web tools, with bench/variants/lean.md added
+ *                 to its AGENTS.md: narrow bash for web data, skills only on need.
  *
  * Every run gets its own copy of the fixture, its own session directory and its
  * own Jev usage log. The copy has no .git, so a task's setup cannot be read back
@@ -24,6 +26,7 @@ import { join, resolve } from "node:path";
 
 import { snapshot } from "./snapshot.ts";
 import { TASKS, type Task } from "./tasks.ts";
+import { WEB_TASKS } from "./web-tasks.ts";
 
 const repo = resolve(import.meta.dir, "..");
 
@@ -41,12 +44,14 @@ const thinking = flag("thinking", "medium");
 const repeats = Number(flag("repeats", "2"));
 const concurrency = Number(flag("concurrency", "4"));
 const timeoutMs = Number(flag("timeout-min", "15")) * 60_000;
-const onlyTasks = flag("tasks", TASKS.map((task) => task.id).join(",")).split(",");
+const suite = flag("suite", "code");
+const SUITE = suite === "web" ? WEB_TASKS : TASKS;
+const onlyTasks = flag("tasks", SUITE.map((task) => task.id).join(",")).split(",");
 const arms = flag("arms", "stock,stock-skills,juna").split(",") as Arm[];
 const mainDir = process.env.PI_MAIN_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const junaKeys = join(process.env.JUNA_DIR ?? join(homedir(), ".pi", "juna"), "juna.json");
 
-type Arm = "stock" | "stock-skills" | "juna";
+type Arm = "stock" | "stock-skills" | "juna" | "juna-lean";
 
 interface Job {
 	arm: Arm;
@@ -92,6 +97,14 @@ async function waitForDisk(name: string): Promise<void> {
 	}
 }
 
+/** juna's profile with the lean variant appended to its AGENTS.md. The launcher keeps an existing AGENTS.md. */
+function leanProfile(dir: string): string {
+	junaProfile(dir);
+	const base = readFileSync(join(repo, "config", "AGENTS.md"), "utf8").trimEnd();
+	writeFileSync(join(dir, "AGENTS.md"), `${base}\n${readFileSync(join(repo, "bench", "variants", "lean.md"), "utf8")}`);
+	return dir;
+}
+
 async function runOne(job: Job): Promise<Record<string, unknown>> {
 	const name = `${job.task.id}-${job.arm}-${job.repeat}`;
 	await waitForDisk(name);
@@ -111,6 +124,8 @@ async function runOne(job: Job): Promise<Record<string, unknown>> {
 	const [command, args, env]: [string, string[], Record<string, string>] =
 		job.arm === "juna"
 			? [join(repo, "bin", "juna"), common, { JUNA_DIR: junaProfile(join(runDir, "profile")), JUNA_JEV_LOG: jevLog }]
+			: job.arm === "juna-lean"
+			? [join(repo, "bin", "juna"), ["--exclude-tools", "web_search,web_fetch", ...common], { JUNA_DIR: leanProfile(join(runDir, "profile")), JUNA_JEV_LOG: jevLog }]
 			: ["pi", job.arm === "stock" ? ["--no-skills", ...common] : common, { PI_CODING_AGENT_DIR: stockProfile(join(runDir, "profile")) }];
 
 	const started = Date.now();
@@ -125,7 +140,7 @@ async function runOne(job: Job): Promise<Record<string, unknown>> {
 	clearTimeout(timer);
 	const seconds = (Date.now() - started) / 1000;
 
-	const grade = job.task.grade(work, shell, start.changed);
+	const grade = job.task.gradeAsync ? await job.task.gradeAsync(work) : job.task.grade!(work, shell, start.changed);
 	writeFileSync(join(runDir, "diff.patch"), start.diff());
 	const record = { name, arm: job.arm, task: job.task.id, repeat: job.repeat, model, thinking, exitCode, timedOut: seconds * 1000 >= timeoutMs, seconds, ...grade, ...usage(sessionDir), ...jev(jevLog) };
 	writeFileSync(join(runDir, "result.json"), `${JSON.stringify(record, null, 2)}\n`);
@@ -134,9 +149,12 @@ async function runOne(job: Job): Promise<Record<string, unknown>> {
 	return record;
 }
 
+/** A bash command that reaches the network: how stock Pi works around having no web tool. */
+const NETWORK = /\b(curl|wget|npm (view|info|show)|gh (api|release|repo|search)|lynx|w3m|http(ie)?\b|urllib|requests\.get|fetch\()|https?:\/\//;
+
 /** Provider-reported usage, summed over every assistant message in the session. */
 function usage(sessionDir: string) {
-	const totals = { requests: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, toolCalls: 0, toolResultChars: 0, junaMarkers: 0 };
+	const totals = { requests: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, toolCalls: 0, toolResultChars: 0, junaMarkers: 0, webToolCalls: 0, bashNetworkCalls: 0, networkCommands: [] as string[] };
 	if (!existsSync(sessionDir)) return totals;
 	for (const file of readdirSync(sessionDir).filter((entry) => entry.endsWith(".jsonl"))) {
 		for (const line of readFileSync(join(sessionDir, file), "utf8").split("\n")) {
@@ -150,7 +168,18 @@ function usage(sessionDir: string) {
 				totals.cacheRead += message.usage.cacheRead ?? 0;
 				totals.cacheWrite += message.usage.cacheWrite ?? 0;
 				totals.output += message.usage.output ?? 0;
-				if (Array.isArray(message.content)) totals.toolCalls += message.content.filter((part: { type?: string }) => part.type === "toolCall").length;
+				if (Array.isArray(message.content)) {
+					const calls = message.content.filter((part: { type?: string }) => part.type === "toolCall") as { name?: string; arguments?: { command?: string } }[];
+					totals.toolCalls += calls.length;
+					for (const call of calls) {
+						if (call.name === "web_search" || call.name === "web_fetch") totals.webToolCalls++;
+						const command = call.name === "bash" ? String(call.arguments?.command ?? "") : "";
+						if (NETWORK.test(command)) {
+							totals.bashNetworkCalls++;
+							totals.networkCommands.push(command.replace(/\s+/g, " ").slice(0, 160));
+						}
+					}
+				}
 			}
 			if (message.role === "toolResult") {
 				const text = JSON.stringify(message.content ?? "");
@@ -174,7 +203,7 @@ function jev(path: string) {
 
 const jobs: Job[] = [];
 for (let repeat = 1; repeat <= repeats; repeat++) {
-	for (const task of TASKS.filter((entry) => onlyTasks.includes(entry.id))) {
+	for (const task of SUITE.filter((entry) => onlyTasks.includes(entry.id))) {
 		for (const arm of arms) jobs.push({ arm, task, repeat });
 	}
 }

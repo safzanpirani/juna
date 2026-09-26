@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 
 import { snapshot } from "./snapshot.ts";
 import { TASKS } from "./tasks.ts";
+import { WEB_TASKS } from "./web-tasks.ts";
 
 function flag(name: string): string {
 	const index = process.argv.indexOf(`--${name}`);
@@ -28,7 +29,7 @@ for (const name of readdirSync(join(out, "runs")).sort()) {
 	const runDir = join(out, "runs", name);
 	if (!existsSync(join(runDir, "result.json"))) continue;
 	const record = JSON.parse(readFileSync(join(runDir, "result.json"), "utf8")) as Record<string, unknown> & { task: string; passed: boolean; note: string };
-	const task = TASKS.find((entry) => entry.id === record.task);
+	const task = [...TASKS, ...WEB_TASKS].find((entry) => entry.id === record.task);
 	if (!task) throw new Error(`${name}: unknown task ${record.task}`);
 
 	const work = join(mkdtempSync(join(tmpdir(), "juna-regrade-")), "repo");
@@ -42,7 +43,7 @@ for (const name of readdirSync(join(out, "runs")).sort()) {
 	const patch = join(runDir, "diff.patch");
 	// git apply works outside a repository, which the workspace now is.
 	const applied = readFileSync(patch, "utf8").trim() === "" ? { code: 0, out: "" } : sh(`git apply --binary ${JSON.stringify(patch)}`);
-	const grade = applied.code === 0 ? task.grade(work, sh, start.changed) : { passed: false, note: `diff did not apply: ${applied.out.trim()}` };
+	const grade = applied.code !== 0 ? { passed: false, note: `diff did not apply: ${applied.out.trim()}` } : task.gradeAsync ? await task.gradeAsync(work) : task.grade!(work, sh, start.changed);
 	rmSync(join(work, ".."), { recursive: true, force: true });
 
 	if (grade.passed !== record.passed) console.log(`${name}: ${record.passed ? "PASS" : "FAIL"} -> ${grade.passed ? "PASS" : "FAIL"} (${record.note} -> ${grade.note})`);

@@ -40,10 +40,19 @@ export function fetchSettings(settings: PruneSettings): PruneSettings {
 
 const FETCH_TASK = "Preserve substantive page content needed to answer the complete question in one response, including definitions, constraints, exceptions, schemas and complete examples. Only obvious navigation, advertising or unrelated boilerplate may score 0. Background and uncertain passages must score at least 1. Never assume another excerpt contains a duplicate: each question is independent.";
 
-export default function (pi: Pick<ExtensionAPI, "registerTool">) {
+/** Below this many characters of highlights, the page is fetched whole instead. */
+const MIN_HIGHLIGHT_CHARS = 200;
+
+export default function (pi: Pick<ExtensionAPI, "registerTool"> & Partial<Pick<ExtensionAPI, "on">>) {
 	const jev = loadConfig();
 	const exa = loadExaConfig();
 	const settings = loadSettings();
+
+	// The user's request is the fallback highlights query when the model gives no question.
+	let task = "";
+	pi.on?.("before_agent_start", (event) => {
+		task = event.prompt.trim();
+	});
 
 	pi.registerTool({
 		name: "web_search",
@@ -69,15 +78,31 @@ export default function (pi: Pick<ExtensionAPI, "registerTool">) {
 		name: "web_fetch",
 		label: "Web Fetch",
 		description:
-			"Read a web page as text (up to 60,000 characters). Omit question for implementation, schemas or complete examples. An optional complete question enables conservative removal of obvious boilerplate; uncertain passages and code are retained.",
-		promptSnippet: "Read a web page",
+			"Read a web page. By default returns only the passages that answer question (or, without one, the user's request), chosen by Exa. Set full=true for the whole page as text (up to 60,000 characters), for complete schemas, API references or examples.",
+		promptSnippet: "Read the relevant parts of a web page",
 		parameters: Type.Object({
 			url: Type.String({ minLength: 4, description: "The page to read." }),
 			question: Type.Optional(
-				Type.String({ description: "Complete information need, including constraints and edge cases. Omit when the complete page is needed." }),
+				Type.String({ description: "What you need from the page, including required facts and edge cases." }),
 			),
+			full: Type.Optional(Type.Boolean({ description: "Return the whole page instead of the relevant passages." })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: undefined });
+			const question = (params.question ?? "").trim();
+			const query = params.full ? "" : question || task;
+
+			if (query) {
+				try {
+					const page = await fetchPage(params.url, DEFAULT_FETCH_CHARS, exa, signal, fetch, query.slice(0, 2000));
+					if (page.text.length >= MIN_HIGHLIGHT_CHARS) {
+						return reply(`${page.title}\n${page.url}\n\n${page.text}\n\n[juna: the passages of this page that answer the ${question ? "question" : "request"}. Pass full=true for the whole page.]`);
+					}
+				} catch {
+					// Highlights are an optimization. The whole page is still worth trying.
+				}
+			}
+
 			let page;
 			try {
 				page = await fetchPage(params.url, DEFAULT_FETCH_CHARS, exa, signal);
@@ -86,11 +111,9 @@ export default function (pi: Pick<ExtensionAPI, "registerTool">) {
 			}
 
 			const header = `${page.title}\n${page.url}\n\n`;
-			const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: undefined });
 
 			// A page short enough to read whole is not worth a round trip, and
 			// without a question there is nothing to judge relevance against.
-			const question = (params.question ?? "").trim();
 			if (!jev.apiKey || !question || page.text.length < settings.minChars) return reply(header + page.text);
 
 			const chunks = splitBounded(page.text, {

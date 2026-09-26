@@ -1,0 +1,1 @@
+- There is no web tool. Get web data through bash and print only what answers the question: `curl -fsSL URL | rg -n 'pattern'`, `| sed -n '1,80p'`, `npm view`, `gh api`, or a short Python script that prints the fields you need. Never print a whole page.
