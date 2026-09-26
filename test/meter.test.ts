@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { render } from "../extensions/jev-meter.ts";
+import { render, renderTps } from "../extensions/jev-meter.ts";
 import { addSaved, resetSaved, totalSaved } from "../extensions/savings.ts";
 
 describe("render", () => {
@@ -46,5 +46,23 @@ describe("savings", () => {
 
 	test("hands the value back so callers can tally inline", () => {
 		expect(addSaved(42)).toBe(42);
+	});
+});
+
+describe("renderTps", () => {
+	test("reports tokens per second", () => {
+		expect(renderTps(500, 5000)).toBe("100 tok/s");
+	});
+
+	test("rounds to a whole number", () => {
+		expect(renderTps(100, 3000)).toBe("33 tok/s");
+	});
+
+	test("says nothing for a burst too short to time", () => {
+		expect(renderTps(40, 20)).toBe("");
+	});
+
+	test("says nothing with no tokens", () => {
+		expect(renderTps(0, 5000)).toBe("");
 	});
 });

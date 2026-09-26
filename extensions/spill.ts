@@ -80,6 +80,6 @@ export function spill(
 	}
 
 	const cut = truncateMiddle(text, options);
-	const notice = `[juna spilled ${Math.round(cut.droppedChars / 1000)}k characters. The whole output is at ${saved} — read the part you need.]`;
+	const notice = `[juna spilled ${Math.round(cut.droppedChars / 1000)}k characters to ${saved}.]`;
 	return { ...truncateMiddle(text, options, notice), path: saved };
 }

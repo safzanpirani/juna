@@ -33,11 +33,58 @@ export function render(meter: Meter): string {
 	return parts.join("  ");
 }
 
+/** Chars per token, for a live estimate before the provider reports usage. */
+const CHARS_PER_TOKEN = 4;
+/** Below this, one burst of chunks gives a rate that means nothing. */
+const MIN_ELAPSED_MS = 100;
+/** How often the live rate repaints while streaming. */
+const PAINT_EVERY_MS = 250;
+
+/**
+ * Decode speed in tokens per second, timed from the first streamed token so
+ * the wait for the first token does not drag the number down.
+ */
+export function renderTps(tokens: number, elapsedMs: number): string {
+	if (!(tokens > 0) || elapsedMs < MIN_ELAPSED_MS) return "";
+	return `${Math.round((tokens * 1000) / elapsedMs)} tok/s`;
+}
+
 export default function (pi: ExtensionAPI) {
 	const reserve = Number.parseInt(process.env.JUNA_RESERVE_TOKENS ?? "", 10) || DEFAULT_RESERVE_TOKENS;
 
+	// Streaming state for the tokens-per-second counter, reset per assistant message.
+	let firstTokenAt = 0;
+	let streamedChars = 0;
+	let lastPaint = 0;
+
+	pi.on("message_start", (event) => {
+		if (event.message.role !== "assistant") return;
+		firstTokenAt = 0;
+		streamedChars = 0;
+		lastPaint = 0;
+	});
+
+	pi.on("message_update", (event, ctx) => {
+		const update = event.assistantMessageEvent;
+		if (update.type !== "text_delta" && update.type !== "thinking_delta" && update.type !== "toolcall_delta") return;
+		const now = Date.now();
+		if (firstTokenAt === 0) firstTokenAt = now;
+		streamedChars += update.delta.length;
+		if (now - lastPaint < PAINT_EVERY_MS) return;
+		lastPaint = now;
+		const live = renderTps(streamedChars / CHARS_PER_TOKEN, now - firstTokenAt);
+		if (live) ctx.ui.setStatus("juna-tps", live);
+	});
+
 	pi.on("message_end", (event, ctx) => {
-		const usage = (event.message as { usage?: { input?: number; cacheRead?: number } }).usage;
+		const usage = (event.message as { usage?: { input?: number; output?: number; cacheRead?: number } }).usage;
+		if (event.message.role === "assistant" && firstTokenAt > 0) {
+			// The provider's output count replaces the estimate once it exists.
+			const tokens = usage?.output || streamedChars / CHARS_PER_TOKEN;
+			const final = renderTps(tokens, Date.now() - firstTokenAt);
+			if (final) ctx.ui.setStatus("juna-tps", final);
+			firstTokenAt = 0;
+		}
 		if (!usage || typeof usage.input !== "number") return;
 		ctx.ui.setStatus("juna-ctx", render({ fresh: usage.input, cached: usage.cacheRead ?? 0 }));
 

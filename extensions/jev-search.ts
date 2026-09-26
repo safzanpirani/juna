@@ -96,7 +96,7 @@ export default function (pi: Pick<ExtensionAPI, "registerTool"> & Partial<Pick<E
 				try {
 					const page = await fetchPage(params.url, DEFAULT_FETCH_CHARS, exa, signal, fetch, query.slice(0, 2000));
 					if (page.text.length >= MIN_HIGHLIGHT_CHARS) {
-						return reply(`${page.title}\n${page.url}\n\n${page.text}\n\n[juna: the passages of this page that answer the ${question ? "question" : "request"}. Pass full=true for the whole page.]`);
+						return reply(`${page.title}\n${page.url}\n\n${page.text}\n\n[juna: excerpts that answer the ${question ? "question" : "request"}.]`);
 					}
 				} catch {
 					// Highlights are an optimization. The whole page is still worth trying.

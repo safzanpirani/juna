@@ -85,7 +85,7 @@ describe("web_fetch highlights", () => {
 		expect(bodies).toHaveLength(1);
 		expect(bodies[0]!.highlights).toEqual({query: "what changed in 15.0.0", dynamic: true});
 		expect(text).toContain(passage);
-		expect(text).toContain("Pass full=true");
+		expect(text).toContain("[juna: excerpts that answer the question.]");
 	});
 	test("without a question the user's request is the query", async () => {
 		const {bodies} = await highlights({}, {highlights: [passage]}, "summarize the upstream changelog");

@@ -41,7 +41,7 @@ describe("reduceTestOutput", () => {
 		expect(folded).toBe(3);
 		for (const title of ["alpha › case 5", "beta › case 2"]) expect(text).toContain(title);
 		expect(text).toContain("Tests:       7 failed");
-		expect(text).toContain("listed by title only");
+		expect(text).toContain("[juna: 3 failures shown by title only.");
 	});
 	test("non-test output is untouched", () => {
 		const text = "line one\nline two\n";

@@ -39,10 +39,10 @@ Pi re-sends its system prompt and tool schemas on every request. `scripts/contex
 
 | Setup | Stock Pi | juna | Change |
 |---|---:|---:|---:|
-| No skills installed | 1,355 tok | 1,923 tok | +568 tok |
-| About 160 skills installed | 23,016 tok | 1,922 tok | −21,094 tok (−92%) |
+| No skills installed | 1,355 tok | 1,886 tok | +531 tok |
+| About 160 skills installed | 23,070 tok | 1,886 tok | −21,184 tok (−92%) |
 
-With no skills installed, juna's prompt is larger. It adds four tools stock Pi does not have (`web_search`, `web_fetch`, `skill_search`, `skill_load`, 534 tokens of schema) and a 477-token `AGENTS.md` with batching rules. With a skill catalogue installed, stock Pi lists every skill's name and description in the prompt. juna removes that list and gives the model `skill_search` instead.
+With no skills installed, juna's prompt is larger. It adds four tools stock Pi does not have (`web_search`, `web_fetch`, `skill_search`, `skill_load`, 534 tokens of schema) and a 441-token `AGENTS.md` with batching rules. With a skill catalogue installed, stock Pi lists every skill's name and description in the prompt. juna removes that list and gives the model `skill_search` instead.
 
 That prefix is paid on every request of every session. The 21k-token catalogue costs this much in a 30-request session:
 
@@ -282,9 +282,9 @@ The script reads the keys exactly as juna does and makes one real call to each s
 **Check:** with both keys set, it prints:
 
 ```
-TypeSafe: OK (jev-latest, answered yes with probability 0.99)
+TypeSafe: OK (jev-latest)
 Skill picker: key found
-Exa: OK (read https://example.com, 135 characters)
+Exa: OK
 ```
 
 and exits 0. A service with no key prints `no key` and does not fail the check. Anything else exits 1:
@@ -314,7 +314,7 @@ python3 -m venv ~/.pi/juna/python-venv
 bun scripts/context-report.ts --stock
 ```
 
-This costs nothing. It captures the turn-0 payload of stock Pi and of juna and exits before either request is sent. With skills installed, the last line shows a large saving. With no skills installed, juna comes out about 570 tokens larger, which is expected (see [What it saves](#what-it-saves)).
+This costs nothing. It captures the turn-0 payload of stock Pi and of juna and exits before either request is sent. With skills installed, the last line shows a large saving. With no skills installed, juna comes out about 530 tokens larger, which is expected (see [What it saves](#what-it-saves)).
 
 Then run one real turn that produces long output:
 
@@ -406,7 +406,7 @@ Above 50 KB, juna writes the full output to a file. The context gets the head, t
 1. `before_agent_start` records the user's prompt as the task.
 2. `tool_result` splits the output on line boundaries into at most 40 chunks.
 3. One Jev call scores every chunk in parallel on a three-level scale: irrelevant, background, load-bearing. The task goes in the shared `state` and each chunk goes in its own question, so a long output never crowds the task out.
-4. Chunks below the score floor become `[juna pruned lines 12-98: 87 lines judged irrelevant to the task. Re-run the tool if you need them.]`. Adjacent drops merge into one marker.
+4. Chunks below the score floor become `[juna pruned lines 12-98 as irrelevant to the task. Re-run the tool to see them.]`. Adjacent drops merge into one marker.
 
 The score floor starts at `minScore` and climbs towards `maxScore` as the window fills, so a long session prunes harder than a fresh one. A higher floor only affects results not yet sent, so it never touches the cached prefix.
 
@@ -442,7 +442,7 @@ Trimming pins the first prompt for the session. Changes to prompt inputs such as
 
 ### Batching instructions
 
-juna's `AGENTS.md` (477 tokens) tells the model that the unit of cost is the turn. Independent calls go in one response. Verification happens once per batch. Output requests stay narrow. In a controlled test with gpt-6-astra, two added batching rules cut requests by 27% and total tokens by 19% across eight runs.
+juna's `AGENTS.md` (441 tokens) tells the model that the unit of cost is the turn. Independent calls go in one response. Verification happens once per batch. Output requests stay narrow. In a controlled test with gpt-6-astra, two added batching rules cut requests by 27% and total tokens by 19% across eight runs.
 
 One line limits `skill_search` to tasks that name a tool, service or workflow the model does not already know. Without it, gpt-6-sol searched skills on almost every task and read up to 56k characters of skill text per call.
 

@@ -45,11 +45,11 @@ describe("fingerprint", () => {
 });
 
 describe("repeatMarker", () => {
-	test("names the tool and says where to look", () => {
+	test("names the tool and the earlier output's size", () => {
 		const marker = repeatMarker({ call: 2, tool: "bash", lines: 1 });
 		expect(marker).toContain("bash");
 		expect(marker).toContain("1 line)");
-		expect(marker).toContain("Scroll up");
+		expect(marker).toContain("earlier in this session");
 	});
 });
 

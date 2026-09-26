@@ -81,7 +81,7 @@ export function assemble(chunks: Chunk[], kept: readonly boolean[]): AssembleRes
 
 	function flushRun() {
 		if (runStart === undefined) return;
-		parts.push(`[juna pruned lines ${runStart}-${runEnd}: ${runLines} line${runLines === 1 ? "" : "s"} judged irrelevant to the task. Re-run the tool if you need them.]`);
+		parts.push(`[juna pruned lines ${runStart}-${runEnd} as irrelevant to the task. Re-run the tool to see them.]`);
 		runStart = undefined;
 		runLines = 0;
 	}

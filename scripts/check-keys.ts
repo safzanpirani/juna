@@ -32,7 +32,7 @@ if (!jev.apiKey) {
 		);
 		const answer = response.answers?.check as { noul?: number } | undefined;
 		if (typeof answer?.noul !== "number") throw new Error("the reply had no answer");
-		console.log(`TypeSafe: OK (${jev.model}, answered yes with probability ${answer.noul.toFixed(2)})`);
+		console.log(`TypeSafe: OK (${jev.model})`);
 	} catch (error) {
 		failed = true;
 		console.log(`TypeSafe: FAILED. ${(error as Error).message}`);
@@ -57,8 +57,8 @@ if (!exa.apiKey) {
 	console.log(`Exa: no key. Set EXA_API_KEY, or add "exaApiKey" to ${join(env.PI_CODING_AGENT_DIR, "juna.json")}. web_search and web_fetch stay off.`);
 } else {
 	try {
-		const page = await fetchPage("https://example.com", 200, exa);
-		console.log(`Exa: OK (read ${page.url}, ${page.text.length} characters)`);
+		await fetchPage("https://example.com", 200, exa);
+		console.log("Exa: OK");
 	} catch (error) {
 		failed = true;
 		console.log(`Exa: FAILED. ${(error as Error).message}`);

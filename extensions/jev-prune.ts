@@ -268,7 +268,6 @@ export default function (pi: ExtensionAPI) {
 	const sessionId = `${process.pid}-${randomUUID()}`;
 	let spills = 0;
 	let task = "";
-	let saved = 0;
 
 	pi.on("session_start", () => memory.clear());
 	pi.on("session_compact", () => memory.clear());
@@ -316,8 +315,8 @@ export default function (pi: ExtensionAPI) {
 			if (cleaned.applied.length) {
 				original = exitLine && !cleaned.text.trimEnd().endsWith(exitLine) ? `${cleaned.text.trimEnd()}\n\n${exitLine}` : cleaned.text;
 				state.reduced = { text: original, textPart: textParts[0]! };
-				saved += addSaved(Math.max(0, raw.length - original.length));
-				ctx.ui.setStatus("juna", `reduced ${cleaned.applied.join("+")} (${Math.round(saved / 1000)}k chars saved)`);
+				addSaved(Math.max(0, raw.length - original.length));
+				ctx.ui.setStatus("juna", `reduced ${cleaned.applied.join("+")}`);
 			}
 		}
 		if (original.length < settings.minChars) return;
@@ -338,16 +337,16 @@ export default function (pi: ExtensionAPI) {
 		// 1. A search that found nothing is one line, whoever asked.
 		const nothing = uselessNotice(event.toolName, original);
 		if (nothing) {
-			saved += addSaved(original.length - nothing.length);
-			ctx.ui.setStatus("juna", `empty result collapsed (${Math.round(saved / 1000)}k chars saved)`);
+			addSaved(original.length - nothing.length);
+			ctx.ui.setStatus("juna", `empty result collapsed`);
 			return replace(nothing);
 		}
 
 		// 2. Bytes already in the conversation never need to enter it twice.
 		const earlier = memory.lookup(event.toolName, original);
 		if (earlier) {
-			saved += addSaved(original.length - repeatMarker(earlier).length);
-			ctx.ui.setStatus("juna", `repeat dropped (${Math.round(saved / 1000)}k chars saved)`);
+			addSaved(original.length - repeatMarker(earlier).length);
+			ctx.ui.setStatus("juna", `repeat dropped`);
 			return replace(repeatMarker(earlier));
 		}
 
@@ -356,8 +355,8 @@ export default function (pi: ExtensionAPI) {
 		if (path && !(event.details as { truncation?: { truncated?: boolean } } | undefined)?.truncation?.truncated) {
 			const folded = summarize(path, original, settings);
 			if (folded) {
-				saved += addSaved(original.length - folded.length);
-				ctx.ui.setStatus("juna", `folded ${path.split("/").pop()} (${Math.round(saved / 1000)}k chars saved)`);
+				addSaved(original.length - folded.length);
+				ctx.ui.setStatus("juna", `folded ${path.split("/").pop()}`);
 				return replace(folded);
 			}
 		}
@@ -382,7 +381,7 @@ export default function (pi: ExtensionAPI) {
 		});
 		if (chunks.length < 2) {
 			if (spilled.droppedChars > 0) {
-				saved += addSaved(original.length - body.length);
+				addSaved(original.length - body.length);
 				return replace(body);
 			}
 			return;
@@ -435,7 +434,7 @@ export default function (pi: ExtensionAPI) {
 		if (result.keptChunks === 0) return;
 		if (result.droppedChunks === 0 || result.text.length >= body.length) {
 			if (spilled.droppedChars > 0) {
-				saved += addSaved(original.length - body.length);
+				addSaved(original.length - body.length);
 				return replace(body);
 			}
 			return;
@@ -454,10 +453,10 @@ export default function (pi: ExtensionAPI) {
 		}
 		const finalText = verdict ? `${verdict}\n${result.text}` : result.text;
 
-		saved += addSaved(original.length - finalText.length);
+		addSaved(original.length - finalText.length);
 		ctx.ui.setStatus(
 			"juna",
-			`pruned ${result.droppedLines} lines at floor ${floor.toFixed(2)} (${Math.round(saved / 1000)}k chars saved)`,
+			`pruned ${result.droppedLines} lines`,
 		);
 		return replace(finalText);
 	};

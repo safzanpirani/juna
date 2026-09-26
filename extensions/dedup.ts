@@ -61,7 +61,6 @@ export class OutputMemory {
 export function repeatMarker(earlier: Seen): string {
 	return (
 		`[juna: identical to the ${earlier.tool} output earlier in this session ` +
-		`(${earlier.lines} line${earlier.lines === 1 ? "" : "s"}). Nothing has changed since, ` +
-		`so it is not repeated here. Scroll up for it.]`
+		`(${earlier.lines} line${earlier.lines === 1 ? "" : "s"}).]`
 	);
 }

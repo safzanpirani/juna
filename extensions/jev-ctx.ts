@@ -73,7 +73,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Show what is filling the context window",
 		handler: async (_args, ctx) => {
 			if (!last) {
-				ctx.ui.notify("Nothing has been sent yet this session, so there is no context to show.", "info");
+				ctx.ui.notify("Nothing has been sent yet this session.", "info");
 				return;
 			}
 			const window = ctx.getContextUsage()?.contextWindow ?? 0;

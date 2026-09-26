@@ -94,7 +94,7 @@ export function reduceTestOutput(text: string, rerunHint = "rerun one test by na
 
 	let result = out.join("\n").replace(/\n{3,}/g, "\n\n");
 	if (folded > 0) {
-		result += `\n\n[juna: ${folded} more failures listed by title only; the first ${FULL_FAILURES} and the first of each failing file are shown in full. To see one, ${rerunHint}.]`;
+		result += `\n\n[juna: ${folded} failures shown by title only. To see one, ${rerunHint}.]`;
 	}
 	return result.length < text.length ? { text: result, folded } : { text, folded: 0 };
 }
@@ -150,7 +150,7 @@ export function reduceBashOutput(text: string, rerunHint?: string): Reduction {
 	step("tests", reduceTestOutput(current, rerunHint).text);
 	if (looksLikeHtml(current)) {
 		const converted = htmlToText(current);
-		if (converted.length < current.length * 0.8) step("html", `${converted}\n\n[juna: HTML converted to text, ${current.length} to ${converted.length} characters.]`);
+		if (converted.length < current.length * 0.8) step("html", `${converted}\n\n[juna: HTML converted to text.]`);
 	}
 	return { text: current, applied };
 }
