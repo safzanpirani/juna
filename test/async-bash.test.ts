@@ -43,8 +43,26 @@ test("a call inside the grace window returns the built-in result, errors include
 	const h = harness({ JUNA_ASYNC_GRACE_MS: "5000" });
 	const result = await h.run("a", "echo hi");
 	expect(result.content[0].text.trim()).toBe("hi");
-	await expect(h.run("b", "echo oops; exit 3")).rejects.toThrow("Command exited with code 3");
+	const failed = await h.run("b", "echo oops; exit 3");
+	expect(failed.isError).toBe(true);
+	expect(failed.content[0].text).toContain("Command exited with code 3");
 	expect(h.sent).toHaveLength(0);
+});
+
+test("a codemode script's bash call is never detached", async () => {
+	const h = harness();
+	const result = await h.run("script/1", "sleep 0.3; echo whole");
+	expect(result.content[0].text.trim()).toBe("whole");
+	expect(h.sent).toHaveLength(0);
+});
+
+test("a slow call that exits nonzero arrives as failed", async () => {
+	const h = harness();
+	await h.run("bad", "sleep 0.3; echo oops; exit 3");
+	await h.endTurn(false);
+	expect(h.sent).toHaveLength(1);
+	expect(h.sent[0]!.content).toContain('<bash_result tool_call_id="bad" status="failed"');
+	expect(h.sent[0]!.content).toContain("Command exited with code 3");
 });
 
 test("a slow call returns a placeholder, and a held turn continues with its result", async () => {

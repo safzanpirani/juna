@@ -4,7 +4,7 @@ juna is a lean profile for the [Pi coding agent](https://github.com/earendil-wor
 
 juna wraps [TypeSafe Jev](https://docs.typesafe.ai), a small and cheap judgment model, around Pi's context pipeline. Jev costs $0.042 per million input tokens. gpt-6-sol costs $0.20 per million cached input tokens (5 times more) and $2 per million uncached (48 times more). gpt-6-astra costs $1 and $10. juna spends a Jev call to decide what the frontier model does not need to read.
 
-juna never breaks the provider prompt cache. Every saving below comes on top of normal prompt caching, never at its expense.
+juna never breaks the provider prompt cache. Every saving below is on top of normal prompt caching.
 
 - [What juna adds to stock Pi](#what-juna-adds-to-stock-pi)
 - [What it saves](#what-it-saves)
@@ -17,7 +17,7 @@ juna never breaks the provider prompt cache. Every saving below comes on top of 
 
 ## What juna adds to stock Pi
 
-Stock Pi gives the model four tools: `read`, `bash`, `edit` and `write`. juna keeps those four and adds the rest of this table.
+Stock Pi gives the model four tools: `read`, `bash`, `edit` and `write`. juna keeps those four, turns on Pi's built-in `codemode` and `tool_search`, and adds the rest of this table.
 
 | | Stock Pi | juna |
 |---|---|---|
@@ -27,11 +27,13 @@ Stock Pi gives the model four tools: `read`, `bash`, `edit` and `write`. juna ke
 | Tool output | passed through whole | colour codes and passing-test lines stripped, empty results collapse, repeats become pointers, code reads fold, huge output spills to a file, Jev prunes the rest |
 | Test runs | raw output | a `[juna: FAILED]` verdict line, and "same failure as before" on a rerun |
 | Context visibility | a percentage | `/ctx` breakdown, and a status line with the compaction mark and tokens saved |
-| Opt-in modes | none | Python CodeMode, async bash, computer use |
+| Scripted tool calls | `codemode` off | `codemode` on: JavaScript that batches and filters tool calls, so only the script's output reaches the model |
+| MCP servers | Pi's MCP client, `codemode` and `tool_search` activated when a server needs them | the same client, with `codemode` and `tool_search` always declared so the tool list never changes mid-session |
+| Opt-in modes | none | async bash, computer use, jevgrep code search |
 
 ## What it saves
 
-The numbers come from four measurements. Each one can be reproduced with a script in this repo.
+The numbers come from five measurements. A script in this repo reproduces each one.
 
 ### 1. The prompt Pi sends on every request
 
@@ -39,10 +41,10 @@ Pi re-sends its system prompt and tool schemas on every request. `scripts/contex
 
 | Setup | Stock Pi | juna | Change |
 |---|---:|---:|---:|
-| No skills installed | 1,355 tok | 1,886 tok | +531 tok |
-| About 160 skills installed | 23,070 tok | 1,886 tok | −21,184 tok (−92%) |
+| No skills installed | 1,385 tok | 2,521 tok | +1,136 tok |
+| This Mac's skills installed | 25,085 tok | 2,521 tok | −22,564 tok (−90%) |
 
-With no skills installed, juna's prompt is larger. It adds four tools stock Pi does not have (`web_search`, `web_fetch`, `skill_search`, `skill_load`, 534 tokens of schema) and a 441-token `AGENTS.md` with batching rules. With a skill catalogue installed, stock Pi lists every skill's name and description in the prompt. juna removes that list and gives the model `skill_search` instead.
+Measured with Pi 1.0.0. With no skills installed, juna's prompt is larger. It declares six tools stock Pi leaves off (`codemode`, `tool_search`, `web_search`, `web_fetch`, `skill_search`, `skill_load`), and a 441-token `AGENTS.md` with batching rules. `codemode` and `tool_search` cost 468 tokens of that, plus a short note on each other tool about calling it from scripts. With a skill catalogue installed, stock Pi lists every skill's name and description in the prompt. juna removes that list and gives the model `skill_search` instead.
 
 That prefix is paid on every request of every session. The 21k-token catalogue costs this much in a 30-request session:
 
@@ -105,7 +107,7 @@ In these tasks the agents narrowed their own tool output with `rg`, `sed -n` and
 
 ### 3. Web tasks, stock Pi vs juna
 
-Stock Pi has no web tool. These tasks need live information, to see whether the model fails without one or finds another way. Graders fetch the correct answer when grading, so nothing is hard-coded.
+Stock Pi has no web tool. These tasks need live information, and they test whether the model fails without a web tool or finds another way. Graders fetch the correct answer when grading, so nothing is hard-coded.
 
 - **npm**: the newest `commander` release on npm and its publish date.
 - **changelog**: every change in the upstream changelog since 14.0.0, with its pull request number. Fifteen PR numbers prove the page was read.
@@ -120,11 +122,46 @@ Same model, prices and three repeats. Mean cost per run:
 | price | $0.057 | $0.024 | $0.019 | Python `requests` against Google results and typesafe.ai, parsed with BeautifulSoup |
 | **Total, 9 runs** | **$0.37** | **$0.31** | **$0.23** | |
 
-Every arm passed all nine runs. gpt-6-sol did not need web tools: it reached every answer through bash. With them, juna cost 15% less than stock Pi. A second pass of juna on the same tasks cost $0.34, 7% less than stock Pi, so the margin is small. The saving came from the price task, where `web_search` and `web_fetch` returned about 6k characters against 51k of scraped HTML. On the changelog task, the model asked `web_fetch` for the full page (`full=true`) in two of three runs even after the highlights had covered every change, which made juna the most expensive arm on that task.
+Every arm passed all nine runs. gpt-6-sol did not need web tools, because it reached every answer through bash. With them, juna cost 15% less than stock Pi. A second pass of juna on the same tasks cost $0.34, 7% less than stock Pi, so the margin is small. The saving came from the price task, where `web_search` and `web_fetch` returned about 6k characters against 51k of scraped HTML. On the changelog task, the model asked `web_fetch` for the full page (`full=true`) in two of three runs even after the highlights had covered every change, which made juna the most expensive arm on that task.
 
-juna-lean was cheapest, at 38% below stock Pi. It depends on the model knowing how to fetch narrowly through bash. gpt-6-sol does. A model that does not would print whole pages into its context or give up, which is why juna keeps the web tools by default.
+juna-lean was cheapest, at 38% below stock Pi. It depends on the model knowing how to fetch narrowly through bash, and gpt-6-sol knows how. A model without that habit would print whole pages into its context or give up, so juna keeps the web tools by default.
 
-### 4. Individual stages
+### 4. MCP tasks
+
+`bench/run.ts --suite mcp` runs four graded tasks against six local servers with 48 tools: an issue tracker, a SQL warehouse on the legacy protocol, a wiki, and calendar, mail and chat servers that the tasks never need. The servers keep their state in the run's workspace, and code grades what they recorded.
+
+- **triage**: find the open issue behind "the login page times out", label it, assign it to Priya from the platform team and comment. A closed issue about the same symptom and a second Priya are there to catch shortcuts.
+- **revenue**: find 2025's top customer by paid order value. Counting refunds or 2024 orders gives a different answer.
+- **runbook**: turn the current wiki runbook for rotating the signing key into a tracker issue assigned to its owner. A superseded 2023 runbook sits next to it.
+- **control**: write and run a Python script. No MCP is needed, so it shows what having the servers configured costs a task that never uses them.
+
+The arms are Pi's three MCP exposures: `mcp-codemode` (tools reached from scripts, Pi's default), `mcp-deferred` (tools loaded by `tool_search`) and `mcp-direct` (every tool declared up front). Each indirect arm ran twice, once with Pi's BM25 `tool_search` alone and once with juna's [Jev tool loading](#codemode-and-tool-search). gpt-6.1-sol at medium thinking, three repeats, Pi 1.0.0, priced at $2 input, $0.20 cached input, $10 output and $0.042 Jev input per million tokens:
+
+| MCP tasks, totals over 9 runs | Codemode, BM25 | Codemode, Jev | Tool search, BM25 | Tool search, Jev | Direct |
+|---|---:|---:|---:|---:|---:|
+| Runs passed | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
+| Model requests | 59 | 48 | 56 | 49 | 39 |
+| `tool_search` calls per run | 2.6 | 1.0 | 2.9 | 1.0 | 0 |
+| Uncached input tokens | 140k | 95k | 145k | 103k | 116k |
+| Cached input tokens | 49k | 65k | 31k | 60k | 147k |
+| Jev input tokens | 0 | 100k | 0 | 100k | 0 |
+| **Total cost** | $0.318 | **$0.235** | $0.326 | $0.251 | $0.287 |
+
+| Control task, mean per run | juna without MCP | Codemode | Tool search | Direct |
+|---|---:|---:|---:|---:|
+| First request | 2,191 tok | 2,195 tok | 2,194 tok | 6,225 tok |
+| Cost | $0.0157 | $0.0135 | $0.0161 | $0.0221 |
+
+What the numbers say:
+
+- **Every arm passed every run.**
+- **BM25 misses cost requests.** gpt-6.1-sol asks `tool_search` for one or two tools, and word overlap often returns the wrong ones: a search for "tracker create_issue" loaded `create_label`, and one runbook run searched five times. Every search is a request, and every load changes the declared tools, so the cache restarts. With BM25 alone, both indirect arms cost more than direct.
+- **Jev loading took every run to one search.** Jev reads the task as well as the query, so one search loads every tool the task will call. Codemode with Jev cost 26% less than codemode with BM25 and 18% less than direct.
+- **The codemode arm searches too.** juna declares `tool_search` in every session, and the model used it to load tools in the codemode arm as well.
+- **Loading more tools can add steps.** On revenue, Jev also loaded `list_tables` and `describe_table`, and the model used them before querying, so revenue took 7 requests instead of 5.
+- **Configured servers cost nothing when unused.** The control task's first request is the same size with codemode or deferred servers configured as without MCP. Direct adds about 4,000 tokens to every request.
+
+### 5. Individual stages
 
 
 | Stage | Measurement |
@@ -185,7 +222,7 @@ bun run check
 
 Any parent directory works in place of `~/src`. Keep the two repos next to each other. To keep the picker somewhere else, set `JUNA_SKILL_PICKER` to the path of its `extensions/skill-jev.ts` before step 4.
 
-**Check:** `bun run check` ends with `0 fail`. Without the optional Python setup from step 7, it prints one note and skips the eight durable CodeMode tests.
+**Check:** `bun run check` ends with `0 fail`.
 
 ### Step 3. Put `juna` on PATH
 
@@ -297,18 +334,7 @@ and exits 0. A service with no key prints `no key` and does not fail the check. 
 | `TypeSafe: FAILED. TypeSafe request timed out.` | No network route to `api.typesafe.ai`, or a proxy blocks it |
 | `no key` for a key you did set | The file is not at `~/.pi/juna/juna.json`, the field name is wrong (`apiKey`, `exaApiKey`), or the JSON is invalid |
 
-### Step 7. Optional: Python for CodeMode
-
-Skip this step unless you plan to run `juna --codemode`.
-
-```bash
-python3 -m venv ~/.pi/juna/python-venv
-~/.pi/juna/python-venv/bin/python -m pip install 'dill==0.4.1'
-```
-
-**Check:** `~/.pi/juna/python-venv/bin/python -c 'import dill; print(dill.__version__)'` prints `0.4.1`.
-
-### Step 8. Verify with numbers
+### Step 7. Verify with numbers
 
 ```bash
 bun scripts/context-report.ts --stock
@@ -334,7 +360,7 @@ juna -p "Use web_search to find the latest release of the Pi coding agent. Reply
 
 **Check:** the reply is a version number.
 
-### Step 9. Use it
+### Step 8. Use it
 
 ```bash
 cd ~/some/project
@@ -353,11 +379,11 @@ juna never breaks the provider prompt cache.
 
 A tool result is edited exactly once, in Pi's `tool_result` hook, before any provider has seen it. juna registers no `context` handler, rewrites no earlier message and keeps its system prompt identical between turns. The cached prefix stays byte-identical for the life of the session. Pruning only changes what enters it.
 
-Retroactive pruning (walking the history and shrinking old results) is deliberately not implemented. It invalidates the cache from the first edited message onward and usually costs more than it saves.
+juna does not prune retroactively by walking the history and shrinking old results. That would invalidate the cache from the first edited message onward, and it usually costs more than it saves.
 
 ### The tool-output pipeline
 
-Each tool result runs through a ladder of checks, cheapest first. The free stages return early when they apply.
+Each tool result runs through a series of checks, cheapest first. The free stages return early when they apply.
 
 | # | Stage | Cost | What it catches |
 |---|---|---|---|
@@ -365,7 +391,7 @@ Each tool result runs through a ladder of checks, cheapest first. The free stage
 | 1 | Empty-result collapse | free | A search that found nothing becomes one line |
 | 2 | Repeat dedup | free | Bytes this tool already returned this session |
 | 3 | Structural folding | free | A whole-file code read keeps signatures and folds bodies |
-| 4 | Spill | free | A hard ceiling, so one result can never eat the window |
+| 4 | Spill | free | A hard ceiling, so one result can never fill the window |
 | 5 | Jev pruning | one API call | Everything else, judged against the task, plus a test verdict when the command ran tests |
 
 Results from `edit`, `write` and the skill tools are never touched, and neither are images or errors from tools other than `bash`. A failing bash command goes through the pipeline like any other output and always keeps its `Command exited with code N` line.
@@ -383,7 +409,7 @@ When Pi has already cut a long output down to its last 50 KB, the reducers read 
 
 #### Structural folding
 
-A bare `read` of a long code file rarely needs every function body. ast-grep parses the file and every body starts folded. Regions are revealed outermost first until the file is legible. The reveal stops before any single region would blow the limit, so one enormous function cannot starve its siblings. Signatures, imports and braces all survive.
+A bare `read` of a long code file rarely needs every function body. ast-grep parses the file and every body starts folded. Regions are revealed outermost first until the file is legible. The reveal stops before any single region would exceed the limit, so one long function cannot use up the budget for the rest. Signatures, imports and braces all survive.
 
 The footer shows the model how to get a body back, with real line numbers:
 
@@ -436,13 +462,13 @@ Measured against real runs: a passing suite came back `passed` at confidence 1.0
 | `docs` | ~316 tok | Paths to Pi's own documentation |
 | `rules` | ~178 tok | Pi's default tool guidance |
 
-The skill picker replaces the catalogue with `skill_search` and `skill_load`. juna's `AGENTS.md` carries a shorter rewrite of the load-bearing lines from `<rules>`, so the model still knows that `edit` matches `oldText` exactly.
+The skill picker replaces the catalogue with `skill_search` and `skill_load`. juna's `AGENTS.md` carries a shorter rewrite of the essential lines from `<rules>`, so the model still knows that `edit` matches `oldText` exactly.
 
 Trimming pins the first prompt for the session. Changes to prompt inputs such as the working directory or an edited `AGENTS.md` take effect in the next session. The system prompt is the head of the cached prefix, so a prompt that changed per turn would invalidate the whole cache every turn. For that reason Jev never decides what to cut from the prompt. Jev only judges tool output, which is appended once and never re-sent differently.
 
 ### Batching instructions
 
-juna's `AGENTS.md` (441 tokens) tells the model that the unit of cost is the turn. Independent calls go in one response. Verification happens once per batch. Output requests stay narrow. In a controlled test with gpt-6-astra, two added batching rules cut requests by 27% and total tokens by 19% across eight runs.
+juna's `AGENTS.md` (441 tokens) tells the model that the unit of cost is the turn. It asks for independent calls in one response, one verification per batch, and narrow output requests. In a controlled test with gpt-6-astra, two added batching rules cut requests by 27% and total tokens by 19% across eight runs.
 
 One line limits `skill_search` to tasks that name a tool, service or workflow the model does not already know. Without it, gpt-6-sol searched skills on almost every task and read up to 56k characters of skill text per call.
 
@@ -497,34 +523,33 @@ The numbers come from the last provider payload. The overlay estimates four char
 
 The `╎` marks where auto-compaction fires. `juna −24k tok` is the running total the pipeline has removed this session. `jev-trim` reports its own saving the same way: `prompt ~-24k tok (skills 23k, docs 316, rules 178)`. A `~` marks an estimate.
 
-Cache hit rate misleads once the prefix is small. It is `cached / (cached + fresh)`, and the fresh part of each turn (your message, the reply, reasoning) stays roughly constant. A 26k prefix shows 99% hits. The same conversation on a 1.9k prefix shows 90% while costing strictly less. Judge cost per turn, not the hit rate.
+Cache hit rate misleads once the prefix is small. It is `cached / (cached + fresh)`, and the fresh part of each turn (your message, the reply, reasoning) stays roughly constant. A 26k prefix shows 99% hits. The same conversation on a 1.9k prefix shows 90% while costing strictly less. Compare cost per turn instead.
 
-### Optional: Python CodeMode
+### Codemode and tool search
 
-`juna --codemode` (or `JUNA_CODEMODE=1`) adds a `python` tool with a persistent namespace and top-level `await`. Imports, functions, parsed files and fetched pages survive between cells, including across restart and resume. Only printed output enters the conversation. Python results bypass Jev pruning.
+juna declares Pi's built-in `codemode` and `tool_search` tools from the first request of every session. Stock Pi activates them only when an MCP server needs them, which changes the tool declarations mid-session. See Pi's [codemode docs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/codemode.md).
 
-It needs Python 3.10+ with `dill==0.4.1` (setup step 7). juna uses `JUNA_PYTHON` when set, then `~/.pi/juna/python-venv/bin/python`, then `python3`.
+`codemode` runs model-written JavaScript in a QuickJS sandbox. A script calls juna's tools as `tools.<name>(args)`, so it can run calls in parallel and return only what matters. Calls a script makes skip juna's tool-output pipeline, because the script needs the real bytes. The script's own output is also left whole, because the script has already chosen it. In `--async` mode, a script's `bash` calls run to completion, so the script never gets a placeholder.
 
-```python
-import asyncio
-pages = await asyncio.gather(*(tools.web_fetch(url) for url in urls))
-print([len(page) for page in pages])
-# Later cells can inspect pages without fetching again.
-```
-
-The async helpers are `tools.read`, `write`, `edit`, `bash`, `web_search` and `web_fetch`. `tools.call(name, **arguments)` also reaches Pi's `grep`, `find` and `ls`. The kernel runs locally with the same filesystem and network access as bash. It is not a sandbox.
-
-Every completed cell checkpoints its namespace and cwd under `~/.pi/juna/python-state/`. A timeout, cancellation or crash restores the last completed checkpoint and warns that interrupted work may have had external effects. No cell is replayed. Checkpoints contain executable Python serialization, so keep them private. `/python-reset` clears the namespace. The default cell timeout is 120 seconds, configurable per call up to 600. Printed output above 12,000 characters spills to a private file.
-
-CodeMode stays opt-in because it did not save tokens in a benchmark: with two models on data and migration tasks, it passed every completed run but used 25–33% more total tokens than plain juna. Both models already batch Python through bash.
+`tool_search` finds tools that are not declared, such as MCP tools, and declares the matches for the next request. Pi ranks them with BM25 and loads the top `limit`, eight unless the model asks for fewer. gpt-6.1-sol usually asks for two. With a TypeSafe key, `extensions/jev-tool-search.ts` reruns the choice after Pi's search: Jev scores every searchable tool against the query and the task, and the tools it rates as needed (1.2 or more on a 0 to 2 scale, at most eight) replace Pi's picks. A search that Jev finds nothing for, or a failed Jev call, keeps Pi's result. In the [MCP benchmark](#4-mcp-tasks) this took every run to one search and cut cost by about a quarter.
 
 ### Optional: async bash
 
 `juna --async` (or `JUNA_ASYNC=1`) moves slow bash calls to the background, after the design of [Unreal Agent](https://github.com/unreallabsai/unreal-agent). A call that finishes within 10 seconds returns exactly what Pi's bash returns. A slower call returns a placeholder at once and keeps running. Its output arrives later as a `<bash_result>` message. When the model ends a turn while calls are still running, juna holds the run open until a result lands, so `pi -p` works unchanged. `/jobs` lists running calls and `/jobs kill` stops them.
 
-The cache rule holds: the placeholder is an ordinary tool result that nothing edits later, and the late result is a new message.
+The cache rule still holds. The placeholder is an ordinary tool result that nothing edits later, and the late result is a new message.
 
 The gain needs work the model can do while a call runs. On a toy task, async used 4 requests against 3 for plain juna. Measure it on your own long builds before making it the default.
+
+### Optional: code search with jevgrep
+
+`juna --jg` (or `JUNA_JG=1`) adds `code_search`, which runs [jevgrep](https://github.com/dzhng/jevgrep) (`jg`). Ask it how some behavior works, and it returns ranked files, declaration locations and verbatim source excerpts that Jev chose by walking folders, files and declarations. Install the CLI with `npm install --global @dzhng/jevgrep` (Node 22+). When `jg` has no saved credentials, juna gives it the TypeSafe key from `juna.json` over stdin on the first search.
+
+jevgrep's benchmark measured the CLI together with its agent skill. The skill's reading rules (read the excerpts first, treat them as reads, fill only the gaps with ordinary tools) are placed above the first result of each session, so the system prompt stays fixed and a session that never searches pays nothing for them. Steps 1 and 2 of the skill, which cover running the shell command and waiting for it, are left out because the tool does both. jev-prune leaves the result whole, because Jev has already selected it. The result also skips the 50 KB spill ceiling.
+
+The tool adds 155 tokens per request. The source budget caps only the excerpts. The file list and reading leads come on top of it. One search on this repo took 7 seconds and returned 79 KB, about 24k tokens. A broad search from the root of the commander.js fixture returned 128 KB, about 32k tokens. Both results passed into the context whole. That is more than a few `rg` calls would have used, so measure it before making it the default. `bench/run.ts` has a `juna-jg` arm for that. The arm has not produced a complete run yet.
+
+Source sent to jg goes to TypeSafe. jg skips ignored, hidden, dependency and obvious credential files.
 
 ### Optional: computer use
 
@@ -565,7 +590,32 @@ Build that JSON with a program. A shell `echo` turns `\U` into a control charact
 
 Input goes to background windows by default, so the real mouse does not move. When a window refuses background input, the action retries in the foreground and says so. `JUNA_CUA_CURSOR=1` shows the driver's agent cursor moving to each target.
 
-Privacy: Jev requests carry the window title, the task, and control labels and values. Do not point `ui_look` focus, `ui_act` descriptions or `ui_do` at windows holding secrets.
+Jev requests carry the window title, the task, and control labels and values. Do not point `ui_look` focus, `ui_act` descriptions or `ui_do` at windows holding secrets.
+
+### MCP servers
+
+juna uses Pi's built-in MCP client, which reads `~/.pi/juna/mcp.json`. The format is the common `mcpServers` object. See Pi's [MCP docs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md) for the fields, `/mcp`, and `pi mcp add`.
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" },
+      "description": "GitHub issues, pull requests and code"
+    },
+    "morph": {
+      "command": "morph-mcp",
+      "env": { "MORPH_API_KEY": "${MORPH_API_KEY}" },
+      "exposure": "direct"
+    }
+  }
+}
+```
+
+Each server sets how its tools reach the model with `exposure`. `codemode` is the default: scripts call the tools, and nothing is declared. `deferred` declares a tool once `tool_search` loads it. `direct` declares every tool on every request. A config written for juna's earlier client used `expose`; rename it to `exposure`, and use `deferred` or `codemode` where it said `search`.
+
+MCP results the model sees go through juna's tool-output pipeline like any other tool result.
 
 ## Privacy
 
@@ -573,8 +623,9 @@ juna runs locally, but two features send data to outside services when their key
 
 - **TypeSafe (Jev)** receives the text of tool results that are long enough to prune (over 3,000 characters by default), your prompt as the task, and the tool name and arguments. That can include source code, command output and file contents. It also receives skill names and descriptions for `skill_search`, and window titles, control labels and values in computer-use mode.
 - **Exa** receives `web_search` queries, and the URLs and questions given to `web_fetch`.
+- **MCP servers** receive the arguments of every call to their tools. With a TypeSafe key, Jev also receives `tool_search` queries, the task, and the names and descriptions of the searchable tools.
 
-Without a TypeSafe key, nothing leaves the machine for pruning: the output reducers, dedup, folding and spill all run locally. To keep a sensitive project local while still using juna, run it from a separate profile with no key file: `JUNA_DIR=~/.pi/juna-local juna`. The launcher links `juna.json` and `skill-jev.json` from `~/.pi/agent` when they exist there, so keep keys out of that directory too, and leave `TYPESAFE_API_KEY` and `EXA_API_KEY` unset. Your model provider receives the whole conversation as usual, as it would with stock Pi.
+Without a TypeSafe key, nothing leaves the machine for pruning: the output reducers, dedup, folding and spill all run locally. To keep a sensitive project local while still using juna, run it from a separate profile with no key file: `JUNA_DIR=~/.pi/juna-local juna`. The launcher links `juna.json` and `skill-jev.json` from `~/.pi/agent` when they exist there, so keep keys out of that directory too, and leave `TYPESAFE_API_KEY` and `EXA_API_KEY` unset. Your model provider receives the whole conversation, as it does with stock Pi.
 
 ## Configuration
 
@@ -595,7 +646,7 @@ Keys come from the environment or `~/.pi/juna/juna.json` (`apiKey`, `exaApiKey`)
 | `JUNA_SPILL_THRESHOLD` | `50000` | Characters above which the result goes to a file |
 | `JUNA_PRUNE_MAX_CHUNKS` | `40` | Target chunk count before the character budget applies |
 | `JUNA_PRUNE_MIN_LINES` | `8` | Never cut finer than this |
-| `JUNA_PRUNE_MIN_SCORE` | `0.7` | Score floor on the 0–2 scale while the window has room |
+| `JUNA_PRUNE_MIN_SCORE` | `0.7` | Score floor on the 0 to 2 scale while the window has room |
 | `JUNA_PRUNE_MAX_SCORE` | `1.4` | Floor once the window is full |
 | `JUNA_PRUNE_FLOOR_FROM` | `50` | Context percentage where the floor starts rising |
 | `JUNA_PRUNE_MIN_CONFIDENCE` | `0.55` | Below this, the chunk is kept whatever it scored |
@@ -609,8 +660,6 @@ Keys come from the environment or `~/.pi/juna/juna.json` (`apiKey`, `exaApiKey`)
 | `JUNA_TRIM_SECTIONS` | `skills,docs,rules` | Prompt sections to remove; empty keeps everything |
 | `JUNA_RESERVE_TOKENS` | `16384` | Pi's reply reserve, which sets the compaction mark |
 | `JUNA_VERSION_CHECK` | `0` | Set to 1 to let Pi's update banner through |
-| `JUNA_CODEMODE` | `0` | Set to 1 to enable the Python tool at launch |
-| `JUNA_PYTHON` | managed venv, then `python3` | Python executable for CodeMode |
 | `JUNA_ASYNC` | `0` | Set to 1 to enable async bash at launch |
 | `JUNA_ASYNC_GRACE_MS` | `10000` | How long a bash call may run before it moves to the background |
 | `JUNA_ASYNC_HEARTBEAT_MS` | `600000` | Idle wait before a held turn gets a heartbeat; 0 disables it |
@@ -630,8 +679,13 @@ Keys come from the environment or `~/.pi/juna/juna.json` (`apiKey`, `exaApiKey`)
 | `JUNA_CUA_REUSE_MS` | `30000` | How long an action may start from the last reported state |
 | `JUNA_CUA_MAX_ROWS` | `200` | Controls listed per window before asking for `find` |
 | `JUNA_CUA_IMAGE_DIMENSION` | `1280` | Longest edge of a requested screenshot |
+| `JUNA_JG` | `0` | Set to 1 to enable `code_search` at launch |
+| `JUNA_JG_BIN` | `jg` | The jevgrep binary |
+| `JUNA_JG_MAX_SOURCE_BYTES` | `60000` | jg's source excerpt budget; 0 is unlimited |
+| `JUNA_JG_TIMEOUT_MS` | `600000` | Longest wait for one search |
+| `JUNA_JG_NO_CACHE` | `0` | Set to 1 to bypass jg's local answer cache |
 
-Launch flags: `--codemode`/`--no-codemode`, `--async`/`--no-async`, `--cua`/`--no-cua`. The launcher removes them before starting Pi. Everything else goes to Pi unchanged.
+Launch flags: `--async`/`--no-async`, `--cua`/`--no-cua`, `--jg`/`--no-jg`. The launcher removes them before starting Pi. Everything else goes to Pi unchanged.
 
 To tune the pruning thresholds against real output:
 
@@ -648,9 +702,9 @@ It prints each chunk's score, confidence and verdict to stderr and the pruned ou
 | `bun scripts/context-report.ts --stock [--no-skills]` | Turn-0 payload of stock Pi against juna, by prompt section and tool schema | free |
 | `bun scripts/context-report.ts --diff` | juna with and without its extensions | free |
 | `bun scripts/session-anatomy.ts <session.jsonl>` | Token share per message kind in a real session | free |
-| `bench/run.ts` + `bench/report.ts` | End-to-end stock Pi vs juna on graded coding (`--suite code`) or web (`--suite web`) tasks | model, Jev and Exa spend |
+| `bench/run.ts` + `bench/report.ts` | End-to-end stock Pi vs juna on graded coding (`--suite code`) or web (`--suite web`) tasks, and juna's MCP modes on graded MCP tasks (`--suite mcp`) | model, Jev and Exa spend |
 
-The context report runs Pi with `scripts/dump-context.ts`, which captures the provider payload in `before_provider_request` and exits before the request leaves the machine. Token counts use `gpt-tokenizer`. They are estimates, not provider billing.
+The context report runs Pi with `scripts/dump-context.ts`, which captures the provider payload in `before_provider_request` and exits before the request leaves the machine. Token counts use `gpt-tokenizer`. They are estimates and can differ from what the provider bills.
 
 To rerun the benchmark:
 
@@ -661,7 +715,15 @@ bun bench/run.ts --fixture /tmp/commander --out /tmp/juna-bench \
 bun bench/report.ts /tmp/juna-bench/results.json --input 2 --output 10 --cache-read 0.2
 ```
 
-`fixture.sh` caps Jest at two workers per run. Without the cap, many agents running the suite at once start one worker per core each and can exhaust memory. The runner also waits before starting a run while free disk is under 3 GB (`--min-free-gb`). `--arms` picks from `stock`, `stock-skills`, `juna` and `juna-lean`. The report lists each run's web tool calls and the network commands it ran through bash.
+The MCP suite needs no fixture setup. Its workspace and servers live in `bench/mcp/`:
+
+```bash
+bun bench/run.ts --suite mcp --fixture bench/mcp/workspace --out /tmp/juna-mcp-bench \
+  --model <provider>/<id> --thinking medium --repeats 3 --concurrency 6
+bun bench/report.ts /tmp/juna-mcp-bench/results.json --input 2 --output 10 --cache-read 0.2
+```
+
+`fixture.sh` caps Jest at two workers per run. Without the cap, many agents running the suite at once start one worker per core each and can exhaust memory. The runner also waits before starting a run while free disk is under 3 GB (`--min-free-gb`). `--arms` picks from `stock`, `stock-skills`, `juna` and `juna-lean`, and for the MCP suite from `mcp-codemode`, `mcp-deferred`, `mcp-direct` and `juna`, which runs only the control task. The report lists each run's web tool calls and the network commands it ran through bash.
 
 Each run gets a fresh copy of the fixture, a fresh profile, its own session directory and its own Jev usage log under `--out`. Stock Pi borrows credentials from `~/.pi/agent`. Set the prices to your model's rates per million tokens.
 
@@ -675,8 +737,8 @@ Each run gets a fresh copy of the fixture, a fresh profile, its own session dire
 | Extensions do not load | `settings.json` still holds `{{JUNA}}` or points at an old path. Delete it and run `juna` again |
 | Credit or auth errors | No `auth.json` link, or a `defaultProvider` this machine cannot reach |
 | The skill catalogue is still in the prompt | The skill picker is not a sibling directory and `JUNA_SKILL_PICKER` is unset. Delete `~/.pi/juna/settings.json` after fixing it |
-| `bun run check` fails on a fresh clone | bun older than 1.4, `bun install` skipped, or no Python venv for the CodeMode tests |
-| A read is folded but the file is not TypeScript | Expected. ast-grep ships TS, TSX and JS only; other files are never folded |
+| `bun run check` fails on a fresh clone | bun older than 1.4, or `bun install` skipped |
+| A code read is not folded | Folding covers TypeScript, TSX and JavaScript only, the languages in ast-grep's core package. Other files are sent whole |
 | `web_search` says it has no key | No `exaApiKey` in `juna.json` and no `EXA_API_KEY` |
 | `juna -p` never returns | Pi's print mode waits for standard input to close. Add `< /dev/null` |
 | `skill_search` says there is no TypeSafe key | `~/.pi/juna/skill-jev.json` is missing. Run `juna --version` once to link it to `juna.json` |
@@ -703,9 +765,10 @@ Each run gets a fresh copy of the fixture, a fresh profile, its own session dire
 | `extensions/jev-search.ts`, `exa.ts` | `web_search` and `web_fetch` |
 | `extensions/jev-ctx.ts`, `grid.ts` | `/ctx` |
 | `extensions/jev-meter.ts`, `stats.ts`, `savings.ts` | The status line and the savings counter |
-| `extensions/python/` | Opt-in CodeMode |
+| `extensions/jev-tool-search.ts` | Jev's choice of the tools `tool_search` loads |
 | `extensions/async-bash.ts` | Opt-in async bash |
 | `extensions/cua/` | Opt-in computer use |
+| `extensions/jevgrep.ts` | Opt-in `code_search` through jevgrep |
 | `scripts/` | Context report, session anatomy, pruning demo, key check, installer |
 | `bench/` | The stock-vs-juna benchmark |
 

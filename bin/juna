@@ -60,11 +60,11 @@ if [ ! -e "$PI_CODING_AGENT_DIR/skill-jev.json" ] && [ -e "$PI_CODING_AGENT_DIR/
 	ln -s juna.json "$PI_CODING_AGENT_DIR/skill-jev.json"
 fi
 
-# CodeMode, async bash and computer use are opt-in per launch. Load after the profile's
+# Async bash, computer use and jevgrep are opt-in per launch. Load after the profile's
 # prompt trimmer. Existing profiles do not need their settings rewritten.
-codemode="${JUNA_CODEMODE:-0}"
 async="${JUNA_ASYNC:-0}"
 cua="${JUNA_CUA:-0}"
+jg="${JUNA_JG:-0}"
 args=()
 parse_flags=1
 for arg in "$@"; do
@@ -74,17 +74,17 @@ for arg in "$@"; do
 	fi
 	case "$arg" in
 		--) parse_flags=0; args+=("$arg") ;;
-		--codemode) codemode=1 ;;
-		--no-codemode) codemode=0 ;;
 		--async) async=1 ;;
 		--no-async) async=0 ;;
 		--cua) cua=1 ;;
 		--no-cua) cua=0 ;;
+		--jg) jg=1 ;;
+		--no-jg) jg=0 ;;
 		*) args+=("$arg") ;;
 	esac
 done
 ext=()
-[ "$codemode" = "1" ] && ext+=(-e "$here/extensions/python/index.ts")
 [ "$async" = "1" ] && ext+=(-e "$here/extensions/async-bash.ts")
 [ "$cua" = "1" ] && ext+=(-e "$here/extensions/cua/index.ts")
+[ "$jg" = "1" ] && ext+=(-e "$here/extensions/jevgrep.ts")
 exec pi ${ext[@]+"${ext[@]}"} ${args[@]+"${args[@]}"}

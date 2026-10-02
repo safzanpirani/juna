@@ -80,7 +80,7 @@ interface ReduceState {
 /** A reduced complete log up to this size replaces Pi's truncated tail. */
 const SPILL_SAFE_CHARS = 40_000;
 
-const NEVER_PRUNE = new Set(["edit", "write", "skill_load", "skill_search", "web_search", "web_fetch", "python", "ui_look", "ui_act", "ui_do"]);
+const NEVER_PRUNE = new Set(["edit", "write", "skill_load", "skill_search", "web_search", "web_fetch", "codemode", "tool_search", "ui_look", "ui_act", "ui_do", "code_search"]);
 
 /** Minimum characters before pruning is worth a round trip. */
 const DEFAULT_MIN_CHARS = 3_000;
@@ -297,6 +297,8 @@ export default function (pi: ExtensionAPI) {
 
 	const pipeline = async (event: ToolResultEvent, ctx: ExtensionContext, state: ReduceState): Promise<ToolResultEventResult | undefined> => {
 		if (NEVER_PRUNE.has(event.toolName)) return;
+		// A codemode script needs the real bytes; only its own output reaches the model.
+		if (event.parentToolCallId) return;
 		if (event.isError && !prunableError(event.toolName)) return;
 
 		// Explicit recovery reads must return the requested bytes unchanged.

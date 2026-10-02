@@ -18,6 +18,8 @@ export interface Grade {
 export interface Task {
 	id: string;
 	prompt: string;
+	/** MCP suite only: whether the task needs the MCP servers. Arms without MCP skip tasks that do. */
+	mcp?: boolean;
 	/** Break or prepare the workspace before the agent starts. */
 	setup?: (dir: string) => void;
 	/** `changed` lists files that differ from the state the agent started in. */

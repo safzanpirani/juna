@@ -33,6 +33,8 @@ interface Result {
 	webToolCalls?: number;
 	bashNetworkCalls?: number;
 	networkCommands?: string[];
+	firstRequestTokens?: number;
+	tools?: Record<string, number>;
 }
 
 const path = process.argv[2];
@@ -46,8 +48,9 @@ const k = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : Math.round(
 const pct = (a: number, b: number) => (a === 0 ? "n/a" : `${b <= a ? "−" : "+"}${Math.abs(Math.round(((b - a) / a) * 100))}%`);
 
 const tasks = [...new Set(results.map((r) => r.task))];
-const ARMS = ["stock", "stock-skills", "juna", "juna-lean"].filter((arm) => results.some((r) => r.arm === arm));
-const LABEL: Record<string, string> = { stock: "Stock Pi, no skills", "stock-skills": "Stock Pi, skills", juna: "juna", "juna-lean": "juna-lean" };
+const MCP_ARMS = ["mcp-codemode", "mcp-deferred", "mcp-direct"];
+const ARMS = ["stock", "stock-skills", "juna", "juna-lean", ...MCP_ARMS].filter((arm) => results.some((r) => r.arm === arm));
+const LABEL: Record<string, string> = { stock: "Stock Pi, no skills", "stock-skills": "Stock Pi, skills", juna: "juna", "juna-lean": "juna-lean", "mcp-codemode": "Codemode", "mcp-deferred": "Tool search", "mcp-direct": "Direct" };
 console.log(`Prices per million tokens: input $${price.input}, cached input $${price.cacheRead}, output $${price.output}, Jev input $${price.jev}.\n`);
 console.log("| Task | Arm | Passed | Requests | Uncached in | Cached in | Output | Tool output (chars) | Jev in | Cost | Time |");
 console.log("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
@@ -62,6 +65,54 @@ for (const task of tasks) {
 	}
 }
 console.log("\nPer-run averages.\n");
+
+if (results.some((r) => MCP_ARMS.includes(r.arm))) {
+	// The MCP suite compares its arms with each other; mcp-direct stands in for a plain MCP client.
+	const present = MCP_ARMS.filter((arm) => results.some((r) => r.arm === arm));
+	const table = (title: string, rows: Result[]) => {
+		const of = (arm: string) => rows.filter((r) => r.arm === arm);
+		const base = present.includes("mcp-direct") ? "mcp-direct" : present[0]!;
+		console.log(`\n${title}\n`);
+		console.log(`| | ${present.map((arm) => LABEL[arm]).join(" | ")} |`);
+		console.log(`|---|${present.map(() => "---:|").join("")}`);
+		const row = (label: string, pick: (r: Result) => number, format: (n: number) => string, relative = true) =>
+			console.log(`| ${label} | ${present.map((arm) => {
+				const value = sum(of(arm), pick);
+				return arm === base || !relative ? format(value) : `${format(value)} (${pct(sum(of(base), pick), value)})`;
+			}).join(" | ")} |`);
+		row("Runs passed", (r) => (r.passed ? 1 : 0), (n) => `${n}/${of(present[0]!).length}`, false);
+		row("Model requests", (r) => r.requests, (n) => String(n));
+		row("Uncached input tokens", (r) => r.input, k);
+		row("Cached input tokens", (r) => r.cacheRead, k);
+		row("Output tokens", (r) => r.output, k);
+		row("Jev input tokens", (r) => r.jevInputTokens, k);
+		row("Total cost", cost, (n) => `$${n.toFixed(3)}`);
+		row("Wall time", (r) => r.seconds, (n) => `${Math.round(n)}s`);
+	};
+	table("MCP tasks (triage, revenue, runbook), totals over all runs:", results.filter((r) => r.task !== "control"));
+	const control = results.filter((r) => r.task === "control");
+	if (control.length) {
+		console.log("\nControl task, which needs no MCP. Mean per run, with plain juna for reference:\n");
+		console.log("| Arm | Passed | First request (tokens) | Requests | Cost |");
+		console.log("|---|---:|---:|---:|---:|");
+		for (const arm of ["juna", ...present]) {
+			const rows = control.filter((r) => r.arm === arm);
+			if (!rows.length) continue;
+			console.log(`| ${LABEL[arm]} | ${rows.filter((r) => r.passed).length}/${rows.length} | ${k(sum(rows, (r) => r.firstRequestTokens ?? 0) / rows.length)} | ${(sum(rows, (r) => r.requests) / rows.length).toFixed(1)} | $${(sum(rows, cost) / rows.length).toFixed(4)} |`);
+		}
+	}
+	console.log("\nTool calls per MCP-task run (mean):\n");
+	console.log("| Arm | codemode | tool_search | direct MCP tools | other tools |");
+	console.log("|---|---:|---:|---:|---:|");
+	const builtin = new Set(["bash", "read", "edit", "write", "web_search", "web_fetch", "skill_search", "skill_load", "codemode", "tool_search"]);
+	for (const arm of present) {
+		const rows = results.filter((r) => r.arm === arm && r.task !== "control");
+		const mean = (pick: (tools: Record<string, number>) => number) => (sum(rows, (r) => pick(r.tools ?? {})) / Math.max(1, rows.length)).toFixed(1);
+		const count = (tools: Record<string, number>, keep: (name: string) => boolean) => Object.entries(tools).filter(([name]) => keep(name)).reduce((total, [, n]) => total + n, 0);
+		console.log(`| ${LABEL[arm]} | ${mean((t) => t.codemode ?? 0)} | ${mean((t) => t.tool_search ?? 0)} | ${mean((t) => count(t, (name) => !builtin.has(name)))} | ${mean((t) => count(t, (name) => builtin.has(name) && name !== "codemode" && name !== "tool_search"))} |`);
+	}
+	process.exit(0);
+}
 
 const byArm = (arm: string) => results.filter((r) => r.arm === arm);
 const baselines = ARMS.filter((arm) => arm !== "juna");

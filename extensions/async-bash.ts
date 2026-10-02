@@ -269,6 +269,8 @@ export default function (pi: ExtensionAPI) {
 		async execute(callId, params, signal, onUpdate, ctx) {
 			lastCtx = ctx;
 			const builtin = createBashToolDefinition(ctx.cwd);
+			// Pi ids a codemode script's calls `<parent id>/<n>`. A script awaits its result, so never detach.
+			if (callId.includes("/")) return builtin.execute(callId, params, signal, onUpdate, ctx);
 			const job: Job = { callId, command: String(params.command ?? ""), startedAt: Date.now(), abort: new AbortController() };
 			const forward = () => job.abort.abort();
 			if (signal?.aborted) forward();
@@ -291,7 +293,7 @@ export default function (pi: ExtensionAPI) {
 			running.set(callId, job);
 			status(ctx);
 			run.then(
-				(result) => finish(job, textOf(result), false, ctx),
+				(result) => finish(job, textOf(result), result.isError === true, ctx),
 				(error: unknown) => finish(job, error instanceof Error ? error.message : String(error), true, ctx),
 			);
 			return { content: [{ type: "text", text: PLACEHOLDER }], details: undefined };

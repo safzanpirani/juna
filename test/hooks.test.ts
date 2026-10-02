@@ -55,13 +55,23 @@ test("explicit range reads and mixed image output bypass every stage", () => iso
 	expect(await h.get("tool_result")!({ ...event(), content: [...event().content, { type: "image", data: "x", mimeType: "image/png" }] }, ctx)).toBeUndefined();
 }));
 
-test("Python selected output and recovery notices bypass pruning and dedup", () => isolated(async () => {
+test("Codemode script output and recovery notices bypass pruning and dedup", () => isolated(async () => {
 	globalThis.fetch = (async () => { throw new Error("must not call"); }) as unknown as typeof fetch;
 	const h = harness(prune);
-	const original = { ...event(), toolName: "python" };
+	const original = { ...event(), toolName: "codemode" };
 	h.get("before_agent_start")!({ prompt: "task" });
 	h.get("message_end")!({ message: { role: "toolResult", ...original } });
 	expect(await h.get("tool_result")!(original, ctx)).toBeUndefined();
+}));
+
+test("a codemode script's nested calls reach the script unpruned", () => isolated(async () => {
+	let calls = 0;
+	globalThis.fetch = (async () => { calls++; return new Response(JSON.stringify({ answers: { chunk_0: { score: 0, confidence: 1 } } })); }) as unknown as typeof fetch;
+	const h = harness(prune);
+	h.get("before_agent_start")!({ prompt: "task" });
+	expect(await h.get("tool_result")!({ ...event(), toolCallId: "script/1", parentToolCallId: "script" }, ctx)).toBeUndefined();
+	expect(calls).toBe(0);
+	expect((await h.get("tool_result")!(event(), ctx)).content[0].text).toContain("juna pruned");
 }));
 
 test("Jev malformed JSON, all-drop and missing key preserve original after spill", () => isolated(async () => {

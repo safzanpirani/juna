@@ -5,11 +5,14 @@
     "bash",
     "read",
     "edit",
-    "write"
+    "write",
+    "codemode",
+    "tool_search"
   ],
   "extensions": [
     "{{JUNA}}/extensions/jev-trim.ts",
     "{{JUNA}}/extensions/jev-prune.ts",
+    "{{JUNA}}/extensions/jev-tool-search.ts",
     "{{JUNA}}/extensions/jev-meter.ts",
     "{{JUNA}}/extensions/jev-ctx.ts",
     "{{JUNA}}/extensions/jev-search.ts"
